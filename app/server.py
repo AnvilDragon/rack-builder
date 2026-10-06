@@ -9,8 +9,8 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(os.environ.get("DATA_DIR", ROOT), "state.json")
 PORT = int(os.environ.get("PORT", "8080"))
 DOCKER = os.environ.get("DOCKER_HOST_PROXY", "")          # e.g. socket-proxy:2375
-INTERVAL = max(3, int(os.environ.get("LIVE_INTERVAL", "5")))
-HIST_LEN = 120   # samples kept per app (10 minutes at 5 s)
+INTERVAL = max(1, int(os.environ.get("LIVE_INTERVAL", "1")))
+HIST_LEN = 120   # samples kept per app (2 minutes at 1 s)
 PATH_RE = re.compile(r"^[A-Za-z0-9_\-.]{1,64}/[A-Za-z0-9_\-.:@+~]{1,200}$")
 
 lock = threading.Lock()

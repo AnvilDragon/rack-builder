@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     environment:
       - DOCKER_HOST_PROXY=socket-proxy:2375   # live per-app stats; remove with the socket-proxy service to turn off
-      - LIVE_INTERVAL=5
+      - LIVE_INTERVAL=1   # seconds between updates
       - PRICES_TOKEN=paste-your-read-only-token-here   # weekly prices from the repo; leave as-is to turn off
     ports:
       - "30251:8080"
