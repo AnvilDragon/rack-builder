@@ -3,7 +3,6 @@
 services:
   rack-builder:
     image: ghcr.io/anvildragon/rack-builder:latest
-    pull_policy: always
     container_name: rack-builder
     restart: unless-stopped
     environment:
