@@ -40,6 +40,6 @@ services:
 x-portals:
   - name: Rack Builder
     scheme: http
-    host: 0.0.0.0
+    host: 192.168.0.108   # your NAS IP
     port: 30251
     path: /

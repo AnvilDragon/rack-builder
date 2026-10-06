@@ -143,6 +143,8 @@ textarea{position:absolute;left:-9999px}
 .aacts{display:flex;gap:2px;justify-content:flex-end}.aacts button{padding:0 6px}
 .use{font-family:var(--mono);font-size:.74rem;color:var(--muted);line-height:1.2}
 .apmode{display:flex;gap:6px;margin-bottom:8px}.apmode button{font-size:.78rem;padding:3px 10px}.apmode button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.xfer{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}.xfer>summary{font-size:.85rem}
+.xfer textarea{position:static;width:100%;min-height:70px;font-family:var(--mono);font-size:.75rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px;margin-top:8px}
 .paste{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
 .paste textarea{position:static;left:auto;width:100%;min-height:90px;font-family:var(--mono);font-size:.78rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
 .paste code{font-family:var(--mono);font-size:.78rem;background:var(--bg);padding:2px 5px;border-radius:4px;word-break:break-all}
@@ -250,6 +252,12 @@ td select{width:auto;padding:2px 4px}
           <tbody id="parts"></tbody>
           <tfoot><tr><td colspan="6">Total</td><td class="n" id="tTot">$0</td><td></td></tr></tfoot>
         </table></div>
+        <details class="xfer"><summary>Back up or move your data</summary>
+          <p class="hint">Copies your plan, orders, budget and NAS apps as text. Paste it into another copy of Rack Builder (for example the one on your NAS) to move everything over.</p>
+          <div class="row"><button id="exportData" style="flex:0 0 auto">Copy all data</button><span class="hint" id="xferMsg" style="flex:1 1 200px"></span></div>
+          <textarea id="importBox" aria-label="Paste data to import" placeholder="Paste copied data here"></textarea>
+          <div class="row"><button id="importData" class="primary" style="flex:0 0 auto">Import pasted data</button></div>
+        </details>
         <p class="foot" id="copyMsg">Before buying any 10G card, check that each machine has a free PCIe slot of x4 or wider. Turn on scheduled snapshots on the NAS now; they cost nothing. Your NH-D15 is too tall for these 4U cases, so it is not used here. Your existing server parts, including motherboards, RAM and your desktop ATX PSUs, are counted at $0; only the new case is priced. Fiber-first: SFP+ cards and DACs inside the rack, SR optics and OM4 fiber for runs out of it. Electricity uses your rate of $0.128 per kWh, running 24/7. Prices are from October 2026 listings and may change.</p>
       </div>
     </main>
@@ -714,6 +722,18 @@ $("viewApps").addEventListener("click",e=>{const m=e.target.closest("[data-apmod
   else if(act==="del"){if(!b.dataset.confirm){b.dataset.confirm="1";b.textContent="?";b.title="Click again to delete";setTimeout(()=>{if(b.isConnected){delete b.dataset.confirm;b.textContent="✕"}},2500);return}A.apps.splice(i,1)}
   else if(act==="color"){const a=A.apps[i];a.color=APAL[(APAL.indexOf(a.color)+1)%APAL.length]}
   renderApps();apSave()});
+/* ---------- backup / move ---------- */
+$("exportData").addEventListener("click",()=>{const data={rackBuilder:1,orders:DB?ORD:(S.orders||{}),settings:{perCheck:getPerCheck()},apps:apState(),plan:{key:KEY,w:W}};
+  const txt=JSON.stringify(data);const done=()=>{$("xferMsg").textContent="Copied. Paste it into the other copy's import box."};
+  navigator.clipboard?.writeText(txt).then(done).catch(()=>{const b=$("importBox");b.value=txt;b.select();$("xferMsg").textContent="Copy was blocked here, so the data is in the box below. Select it and copy."})});
+$("importData").addEventListener("click",async()=>{let d;try{d=JSON.parse($("importBox").value)}catch(e){$("xferMsg").textContent="That isn't Rack Builder data. Copy it again from the other copy.";return}
+  if(!d||d.rackBuilder!==1){$("xferMsg").textContent="That isn't Rack Builder data.";return}
+  try{if(d.plan&&d.plan.w&&d.plan.w.builds){W=d.plan.w;S=W.builds[W.active]||W.builds.upgrade;save()}
+    if(d.apps&&Array.isArray(d.apps.apps)){AP=d.apps;apSave()}
+    if(d.settings&&typeof d.settings.perCheck==="number"){perCheck=d.settings.perCheck;try{localStorage.setItem("rb.perCheck",perCheck)}catch(e){}if(DB)await DB.doc("settings/budget").set({perCheck})}
+    const o=d.orders||{};if(DB){for(const k in o){ORD[k]=o[k];await DB.doc("orders/"+k).set(o[k])}}else{S.orders=o}
+    if(DB&&d.plan)await DB.doc("plan/state").set({key:KEY,w:JSON.parse(JSON.stringify(W))});
+    render();if(VIEW==="apps")renderApps();$("xferMsg").textContent="Imported.";$("importBox").value=""}catch(e){$("xferMsg").textContent="Some of it didn't save. Try importing again."}});
 /* ---------- views ---------- */
 let VIEW=location.hash==="#apps"?"apps":(()=>{try{return localStorage.getItem("rb.view")||"plan"}catch(e){return "plan"}})();
 function setView(v){VIEW=v;try{localStorage.setItem("rb.view",v)}catch(e){}$("viewPlan").hidden=v!=="plan";$("planStats").hidden=v!=="plan";$("viewApps").hidden=v!=="apps";
@@ -745,12 +765,16 @@ function wireDB(){
 function applyLiveApps(){if(!LIVE||!LIVE.containers)return;const A=apState(),seen={};
   LIVE.containers.forEach(c=>{const cn=normS(String(c.project||c.name).replace(/^ix-/,""));let best=null,bl=0;
     A.apps.forEach(a=>[normS(a.id),normS(a.name)].forEach(k=>{if(k&&cn.includes(k)&&k.length>bl){best=a;bl=k.length}}));
-    if(!best)return;const e=seen[best.id]||(seen[best.id]={used:0,cpu:0,lim:0});e.used+=c.mem/1073741824;e.cpu+=c.cpu;e.lim+=c.limit/1073741824});
-  A.apps.forEach(a=>{const e=seen[a.id];if(e){a.on=true;a.used=Math.round(e.used*1000)/1000;a.cpu=Math.round(e.cpu*100)/100;if(e.lim>0&&e.lim<nz(A.host.ram,32))a.ram=Math.round(e.lim*100)/100}else a.on=false});
+    if(!best){const nm=String(c.project||c.name).replace(/^ix-/,"").replace(/-\d+$/,"");if(!nm||nm==="rack-builder")return;const used=A.apps.map(a=>a.color);
+      best={id:normS(nm),name:nm.replace(/[-_]+/g," ").replace(/\b\w/g,m=>m.toUpperCase()),threads:0,ram:0,ip:"",port:"",notes:"Added from live stats",on:true,color:APAL.find(x=>!used.includes(x))||APAL[A.apps.length%APAL.length]};A.apps.push(best);addedLive=true}
+    const e=seen[best.id]||(seen[best.id]={used:0,cpu:0,lim:0,cpus:0});e.used+=c.mem/1073741824;e.cpu+=c.cpu;e.lim+=c.limit/1073741824;e.cpus+=c.cpus||0;
+    if(c.ports&&!best.port)best.port=c.ports.join(", ");if(c.ip&&!best.ip)best.ip=c.ip});
+  A.apps.forEach(a=>{const e=seen[a.id];if(e){a.on=true;a.used=Math.round(e.used*1000)/1000;a.cpu=Math.round(e.cpu*100)/100;if(e.lim>0&&e.lim<nz(A.host.ram,32))a.ram=Math.round(e.lim*100)/100;if(e.cpus>0)a.threads=Math.round(e.cpus*100)/100}else a.on=false});
+  if(A.host&&LIVE.host&&LIVE.host.memTotal&&!A.host.ramSet){A.host.ram=Math.round(LIVE.host.memTotal/1073741824)}
   A.usedAt=new Date(LIVE.ts*1000).toISOString()}
-let liveSaveAt=0;
+let liveSaveAt=0,addedLive=false;
 async function pollLive(){try{const r=await fetch("api/live",{cache:"no-store"});if(!r.ok)return;LIVE=await r.json();applyLiveApps();
-  if(Date.now()-liveSaveAt>300000){liveSaveAt=Date.now();apSave()}
+  if(addedLive||Date.now()-liveSaveAt>300000){addedLive=false;liveSaveAt=Date.now();apSave()}
   if(VIEW==="apps"){const ae=document.activeElement;if(ae&&$("viewApps").contains(ae)&&ae.tagName==="INPUT")apRefresh();else renderApps()}}catch(e){}}
 (async()=>{
   try{const r=await fetch("api/ping",{cache:"no-store"});if(r.ok){const j=await r.json();SRV=j&&j.app==="rack-builder"}}catch(e){}

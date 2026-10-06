@@ -1,6 +1,7 @@
 # Rack Builder server for TrueNAS: serves the page, stores its data in /app/state.json,
 # and (optionally) reports live CPU, RAM, ZFS cache and per-app usage.
 import json, os, re, threading, time, http.client
+from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -79,30 +80,51 @@ def docker_get(path):
     finally:
         c.close()
 
-def container_stats():
-    out = []
-    for ct in docker_get("/containers/json"):
-        cid = ct["Id"]
+_inspect = {}
+POOL = ThreadPoolExecutor(max_workers=8)
+
+def one_container(ct):
+    cid = ct["Id"]
+    try:
+        st = docker_get("/containers/%s/stats?stream=false&one-shot=true" % cid)
+    except Exception:
+        return None
+    if cid not in _inspect:
         try:
-            st = docker_get("/containers/%s/stats?stream=false&one-shot=true" % cid)
+            hc = (docker_get("/containers/%s/json" % cid).get("HostConfig") or {})
+            _inspect[cid] = (hc.get("NanoCpus") or 0) / 1e9
         except Exception:
-            continue
-        ms = st.get("memory_stats", {}) or {}
-        mem = ms.get("usage", 0) - (ms.get("stats", {}) or {}).get("inactive_file", 0)
-        cs = st.get("cpu_stats", {}) or {}
-        cpu_t = (cs.get("cpu_usage", {}) or {}).get("total_usage", 0)
-        sys_t = cs.get("system_cpu_usage", 0)
-        ncpu = cs.get("online_cpus") or 1
-        cpu = 0.0
-        prev = _prev_ctr.get(cid)
-        if prev and sys_t > prev[1]:
-            cpu = round(100.0 * (cpu_t - prev[0]) / (sys_t - prev[1]) * ncpu, 2)
-        _prev_ctr[cid] = (cpu_t, sys_t)
-        labels = ct.get("Labels", {}) or {}
-        out.append({"name": (ct.get("Names") or ["?"])[0].lstrip("/"),
-                    "project": labels.get("com.docker.compose.project", ""),
-                    "cpu": max(cpu, 0.0), "mem": max(mem, 0), "limit": ms.get("limit", 0)})
-    return out
+            _inspect[cid] = 0
+    ms = st.get("memory_stats", {}) or {}
+    mem = ms.get("usage", 0) - (ms.get("stats", {}) or {}).get("inactive_file", 0)
+    cs = st.get("cpu_stats", {}) or {}
+    cpu_t = (cs.get("cpu_usage", {}) or {}).get("total_usage", 0)
+    sys_t = cs.get("system_cpu_usage", 0)
+    ncpu = cs.get("online_cpus") or 1
+    cpu = 0.0
+    prev = _prev_ctr.get(cid)
+    if prev and sys_t > prev[1]:
+        cpu = round(100.0 * (cpu_t - prev[0]) / (sys_t - prev[1]) * ncpu, 2)
+    _prev_ctr[cid] = (cpu_t, sys_t)
+    labels = ct.get("Labels", {}) or {}
+    ports, ip = [], ""
+    for pt in ct.get("Ports") or []:
+        if pt.get("PublicPort"):
+            ports.append(str(pt["PublicPort"]))
+            if pt.get("IP") and pt["IP"] not in ("0.0.0.0", "::"):
+                ip = pt["IP"]
+    return {"id": cid[:12], "name": (ct.get("Names") or ["?"])[0].lstrip("/"),
+            "project": labels.get("com.docker.compose.project", ""),
+            "cpu": max(cpu, 0.0), "mem": max(mem, 0), "limit": ms.get("limit", 0),
+            "cpus": _inspect.get(cid, 0), "ports": sorted(set(ports), key=lambda x: int(x)), "ip": ip}
+
+def container_stats():
+    cts = docker_get("/containers/json")
+    live = {c["Id"] for c in cts}
+    for k in list(_inspect):
+        if k not in live:
+            _inspect.pop(k, None); _prev_ctr.pop(k, None)
+    return [r for r in POOL.map(one_container, cts) if r]
 
 def collector():
     while True:
