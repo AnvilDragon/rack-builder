@@ -1,0 +1,46 @@
+# TrueNAS: Apps > Discover Apps > (three dots) > Install via YAML
+# Change /mnt/POOL/apps/rack-builder to your dataset. Open http://<NAS IP>:30251
+services:
+  rack-builder:
+    image: ghcr.io/anvildragon/rack-builder:latest
+    pull_policy: always
+    container_name: rack-builder
+    restart: unless-stopped
+    environment:
+      - DOCKER_HOST_PROXY=socket-proxy:2375   # live per-app stats; remove with the socket-proxy service to turn off
+      - LIVE_INTERVAL=10
+    ports:
+      - "30251:8080"
+    volumes:
+      - /mnt/POOL/apps/rack-builder:/data
+    user: "568:568"
+    depends_on:
+      - socket-proxy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+
+  # Read-only window into Docker: lists containers and their stats only. Cannot start, stop or change anything.
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: rack-builder-socket-proxy
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1
+      - POST=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 32M
+
+x-portals:
+  - name: Rack Builder
+    scheme: http
+    host: 0.0.0.0
+    port: 30251
+    path: /

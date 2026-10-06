@@ -1,0 +1,765 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}[hidden]{display:none!important}</style></head><body>
+<title>Rack Builder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: two columns, catalog left, physical rack + parts list right; stacks on phones */
+:root{
+  --bg:#eef0f2; --panel:#ffffff; --fg:#1b1f24; --muted:#5d6670; --line:#d5dade;
+  --accent:#e0761f; --accent-ink:#ffffff; --good:#2f8f5b; --bad:#c23b3b;
+  --rail:#2a2f35; --rail-hole:#14171a; --slot:#1d2126; --slot-line:#2c3238; --slot-txt:#6c7680;
+  --display:"Barlow Condensed","Arial Narrow",sans-serif;
+  --body:"Barlow",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#121518; --panel:#1a1e22; --fg:#e6e9ec; --muted:#97a1ab; --line:#2c3238;
+  --accent:#f08a35; --accent-ink:#1a1006; --good:#4cba7e; --bad:#e26464;
+  --rail:#30363d; --rail-hole:#0c0e10; --slot:#15181b; --slot-line:#262b31; --slot-txt:#5a636c; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#121518; --panel:#1a1e22; --fg:#e6e9ec; --muted:#97a1ab; --line:#2c3238;
+  --accent:#f08a35; --accent-ink:#1a1006; --good:#4cba7e; --bad:#e26464;
+  --rail:#30363d; --rail-hole:#0c0e10; --slot:#15181b; --slot-line:#262b31; --slot-txt:#5a636c; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.45}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:16px;padding-block:20px 48px}
+h1,h2{font-family:var(--display);letter-spacing:.02em;text-wrap:balance;margin:0}
+h1{font-size:2rem;font-weight:700;text-transform:uppercase}
+h2{font-size:1.15rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.lede{color:var(--muted);margin:.25rem 0 0;max-width:62ch}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:end;justify-content:space-between;margin-bottom:18px}
+.stats{display:flex;flex-wrap:wrap;gap:8px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 12px;min-width:110px}
+.stat b{display:block;font-family:var(--mono);font-size:1.05rem;font-weight:500;font-variant-numeric:tabular-nums}
+.stat span{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.stat.total b{color:var(--accent)}
+.grid{display:grid;grid-template-columns:minmax(0,340px) minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:820px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;min-width:0}
+.stack{display:flex;flex-direction:column;gap:20px;min-width:0}
+label.f{display:flex;flex-direction:column;gap:3px;font-size:.75rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+input,select{font:inherit;font-size:.92rem;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:5px;padding:6px 8px;min-width:0;width:100%}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+button{font:inherit;cursor:pointer;border-radius:5px;border:1px solid var(--line);background:var(--bg);color:var(--fg);padding:5px 10px}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:end}
+.row>*{flex:1 1 90px}
+.cat-h{font-family:var(--display);font-size:.85rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);margin:14px 0 4px;border-bottom:1px solid var(--line);padding-bottom:3px}
+.item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:7px 0;border-bottom:1px dashed var(--line);align-items:center}
+.item:last-child{border-bottom:0}
+.item .nm{font-weight:500;min-width:0}
+.item .meta{grid-column:1;font-family:var(--mono);font-size:.74rem;color:var(--muted)}
+.item button{grid-row:1/3;grid-column:2;padding:4px 12px}
+.catalog{max-height:70vh;overflow:auto;padding-right:4px;margin-top:8px}
+.u-tag{display:inline-block;font-family:var(--mono);font-size:.7rem;background:var(--accent);color:var(--accent-ink);border-radius:3px;padding:0 5px;margin-right:6px;vertical-align:1px}
+.u-tag.zero{background:var(--line);color:var(--muted)}
+details summary{cursor:pointer;font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+details .row{margin-top:10px}
+
+/* Rack */
+.rack-area{display:flex;gap:20px;flex-wrap:wrap;align-items:start}
+.rack{flex:0 1 460px;min-width:0;background:var(--rail);border-radius:6px;padding:10px 0;display:grid;grid-template-columns:28px minmax(0,1fr) 28px}
+.rail{display:grid;font-family:var(--mono);font-size:.62rem;color:#9aa4ae;text-align:center}
+.rail div{display:flex;align-items:center;justify-content:center;gap:2px;position:relative}
+.rail div::after{content:"";width:5px;height:5px;background:var(--rail-hole);border-radius:1px;position:absolute;right:3px}
+.rail.r div::after{right:auto;left:3px}
+.bay{display:grid;background:var(--slot);position:relative}
+.slot{border-bottom:1px solid var(--slot-line);color:var(--slot-txt);font-family:var(--mono);font-size:.66rem;display:flex;align-items:center;padding-left:8px;cursor:pointer;background:none;border-radius:0;border-left:0;border-right:0;border-top:0;text-align:left}
+.slot:hover{background:rgba(255,255,255,.04);color:#c7ced5}
+.slot.target{background:rgba(240,138,53,.18);color:#f3b07a}
+.dev{z-index:1;margin:1px 2px;border-radius:3px;display:flex;align-items:center;gap:8px;padding:0 10px;color:#eef1f4;font-size:.82rem;cursor:pointer;overflow:hidden;border:1px solid rgba(255,255,255,.08);text-align:left;font-weight:500;background-image:repeating-linear-gradient(90deg,rgba(255,255,255,.035) 0 2px,transparent 2px 6px)}
+.dev .dn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.dev .du{font-family:var(--mono);font-size:.68rem;opacity:.7}
+.dev .led{width:6px;height:6px;border-radius:50%;background:#58d68d;box-shadow:0 0 6px #58d68d;flex:none}
+.dev.sel{outline:2px solid var(--accent);outline-offset:-1px}
+.c-network{background-color:#2c4a6e}.c-server{background-color:#3d3f46}.c-power{background-color:#5b3a2a}.c-shelf{background-color:#3a4a3c}.c-mgmt{background-color:#2a2e33}.c-custom{background-color:#4a3b5c}
+.side{flex:1 1 220px;min-width:0;display:flex;flex-direction:column;gap:12px}
+.selbox{border:1px solid var(--line);border-radius:6px;padding:10px;font-size:.88rem}
+.selbox .btns{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.hint{font-size:.82rem;color:var(--muted)}
+.warn{color:var(--bad);font-size:.85rem}
+.meter{height:8px;background:var(--bg);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--accent)}
+
+/* Parts list */
+.tbl-wrap{overflow-x:auto;margin-top:10px}
+table{border-collapse:collapse;width:100%;min-width:620px;font-size:.88rem}
+th{font-family:var(--display);text-transform:uppercase;letter-spacing:.07em;font-size:.78rem;color:var(--muted);text-align:left;font-weight:600;padding:6px;border-bottom:1px solid var(--line)}
+td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:middle}
+td.n,th.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+td input{padding:3px 6px;font-family:var(--mono);font-size:.85rem;text-align:right;width:84px}
+td input.q{width:56px}
+td .pos{font-family:var(--mono);font-size:.76rem;color:var(--muted)}
+tfoot td{font-weight:600;border-bottom:0}
+.x{border:0;background:none;color:var(--muted);padding:2px 6px}
+.x:hover{color:var(--bad)}
+.tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.tabs button{font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;font-weight:600;padding:6px 14px}
+.tabs button[aria-selected="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
+.foot{font-size:.8rem;color:var(--muted);margin-top:10px;max-width:70ch}
+textarea{position:absolute;left:-9999px}
+.views{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.views button{font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;font-weight:600;padding:6px 14px}
+.views button[aria-selected="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.sync{font-size:.78rem;color:var(--muted);margin-left:auto}
+.budget{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:end;margin-top:10px}
+.budget .f{max-width:200px}
+.budget .hint{margin:0;flex:1 1 220px}
+.inflight{border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin-top:10px}
+.inflight h3{margin:0 0 6px;font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;font-size:.9rem}
+.inflight .ir{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;padding:4px 0;border-top:1px dashed var(--line);font-size:.88rem}
+.inflight .ir:first-of-type{border-top:0}
+.pill{font-size:.72rem;font-weight:600;border-radius:999px;padding:1px 8px;border:1px solid currentColor;text-transform:uppercase;letter-spacing:.04em}
+.st-ordered .pill,.pill.ordered{color:var(--accent)}.pill.shipped{color:#3b82c4}.pill.delivered,.pill.installed{color:var(--good)}
+.ost{width:auto;flex:none;font-size:.8rem;padding:2px 4px}
+.buy.st-delivered .nm,.buy.st-installed .nm{color:var(--muted)}
+.buy.st-installed .nm{text-decoration:line-through}
+.od{flex:none;padding:0 8px}
+.oform{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;padding:8px 0 10px 4px;border-top:1px dashed var(--line)}
+.oform .f{font-size:.68rem}
+.chk{display:block;font-size:.72rem;color:var(--muted)}
+.when{font-family:var(--mono);font-size:.75rem;color:var(--muted)}
+/* NAS apps view */
+.apps-grid{display:grid;grid-template-columns:minmax(0,280px) minmax(0,1fr);gap:20px;align-items:start}
+@media (max-width:820px){.apps-grid{grid-template-columns:minmax(0,1fr)}}
+.ramrack{background:var(--rail);border-radius:6px;padding:12px 16px}
+.ramrack .rt{display:flex;justify-content:space-between;color:#c9d1d8;font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.ramrack .rt span:last-child{font-family:var(--mono);font-size:.75rem;text-transform:none;letter-spacing:0}
+.rambay{position:relative;background:var(--slot);border-radius:3px}
+.rb{position:absolute;left:0;right:0;border-radius:3px;color:#fff;font-family:var(--mono);font-size:.72rem;display:flex;justify-content:space-between;align-items:center;padding:0 8px;overflow:hidden;white-space:nowrap;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}
+.rb.sys{background:#4a525c}.rb.arc{background:repeating-linear-gradient(135deg,rgba(255,255,255,.07) 0 6px,transparent 6px 12px);color:#c9d1d8}
+.rb.over{background:repeating-linear-gradient(135deg,var(--bad) 0 6px,#7a1f16 6px 12px)}
+.tbar{display:flex;height:16px;background:var(--slot);border-radius:3px;overflow:hidden;margin-top:6px}
+.tbar i{display:block;height:100%;box-shadow:inset -1px 0 0 rgba(0,0,0,.35)}
+.arow,.ahead{display:grid;grid-template-columns:22px 16px minmax(100px,1.3fr) 60px 66px 74px minmax(100px,1fr) 64px minmax(100px,1.2fr) 76px;gap:6px;align-items:center}
+.ahead{font-size:.66rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.arow.off input[type=text],.arow.off input[type=number]{opacity:.5}
+.arow input{padding:4px 6px;font-size:.85rem}
+.arow input[type=number]{font-family:var(--mono)}
+.arows{display:grid;gap:6px;overflow-x:auto}
+.sw{width:16px;height:16px;border-radius:4px;border:none;padding:0;cursor:pointer}
+.aacts{display:flex;gap:2px;justify-content:flex-end}.aacts button{padding:0 6px}
+.use{font-family:var(--mono);font-size:.74rem;color:var(--muted);line-height:1.2}
+.apmode{display:flex;gap:6px;margin-bottom:8px}.apmode button{font-size:.78rem;padding:3px 10px}.apmode button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.paste{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+.paste textarea{position:static;left:auto;width:100%;min-height:90px;font-family:var(--mono);font-size:.78rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px}
+.paste code{font-family:var(--mono);font-size:.78rem;background:var(--bg);padding:2px 5px;border-radius:4px;word-break:break-all}
+.hostf{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+@media (max-width:900px){.ahead{display:none}.arow{grid-template-columns:22px 16px minmax(0,1fr) minmax(0,1fr);padding:6px 0;border-bottom:1px dashed var(--line)}.arow .c-nm,.arow .c-nt{grid-column:span 2}.arow .c-acts{grid-column:span 2}}
+.steps{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.step{border:1px solid var(--line);border-radius:6px}
+.step summary{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 12px;padding:10px 12px;cursor:pointer}
+.step .sn{font-family:var(--display);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+.step .sc{font-family:var(--mono);font-size:.8rem;color:var(--muted);font-variant-numeric:tabular-nums}
+.step .sc b{color:var(--accent);font-weight:500}
+.step.done .sn{color:var(--muted);text-decoration:line-through}
+.step .sb{padding:0 12px 12px;display:flex;flex-direction:column}
+.step .note{margin:0 0 8px;color:var(--muted);font-size:.9rem;max-width:70ch}
+.buy{display:flex;gap:10px;align-items:baseline;padding:6px 0;border-top:1px dashed var(--line)}
+.bl{display:flex;gap:10px;align-items:baseline;flex:1;min-width:0;cursor:pointer}
+.lk{font-size:.8rem;font-weight:600;color:var(--accent);text-decoration:none;border:1px solid var(--accent);border-radius:4px;padding:0 6px;flex:none}
+.lk:hover{background:var(--accent);color:var(--accent-ink)}
+.lk.none{color:var(--muted);border-color:var(--line);font-weight:400}
+.buy input{width:auto;flex:none;accent-color:var(--accent)}
+.buy .nm{flex:1;min-width:0}
+.buy .pr{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.buy.got .nm,.buy.got .pr{text-decoration:line-through;color:var(--muted)}
+.phases{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px}
+.ph{border:1px solid var(--line);border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+.ph span{font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.ph b{font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums;font-size:1.05rem}
+.ph small{font-family:var(--mono);color:var(--muted);font-size:.74rem}
+td select{width:auto;padding:2px 4px}
+@media (prefers-reduced-motion:no-preference){.dev{transition:outline-color .15s}}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Rack Builder</h1>
+      <p class="lede">Pick a rack, add gear, and get a priced parts list. Click an empty U to choose where the next item lands. Prices are rough street estimates; edit any of them in the parts list.</p>
+    </div>
+    <div class="stats" id="planStats">
+      <div class="stat"><b id="sU">0/0U</b><span>Rack space</span></div>
+      <div class="stat"><b id="sW">0 W</b><span>Avg. draw</span></div>
+      <div class="stat"><b id="sE">$0/mo</b><span>Electricity</span></div>
+      <div class="stat total"><b id="sT">$0</b><span>Total cost</span></div>
+    </div>
+  </header>
+  <nav class="views" role="tablist" aria-label="View"><button id="v-plan" data-view="plan" role="tab">Build plan</button><button id="v-apps" data-view="apps" role="tab">NAS apps</button><span class="sync" id="sync"></span></nav>
+
+  <div class="grid" id="viewPlan">
+    <aside class="stack">
+      <div class="panel">
+        <h2>Rack</h2>
+        <div class="row" style="margin-top:8px">
+          <label class="f" style="flex:2 1 180px">Frame<select id="rackSel"></select></label>
+          <label class="f">$/kWh<input id="rate" type="number" step="0.01" min="0"></label>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Catalog</h2>
+        <input id="q" type="search" placeholder="Search parts" style="margin-top:8px" aria-label="Search parts">
+        <div class="catalog" id="catalog"></div>
+      </div>
+      <div class="panel">
+        <details id="customBox">
+          <summary>Add a custom part</summary>
+          <div class="row">
+            <label class="f" style="flex:1 1 100%">Name<input id="cName" placeholder="e.g. Gaming VM host"></label>
+            <label class="f">Rack U<input id="cU" type="number" min="0" max="10" value="2"></label>
+            <label class="f">Watts<input id="cW" type="number" min="0" value="100"></label>
+            <label class="f">Price $<input id="cP" type="number" min="0" value="0"></label>
+          </div>
+          <div class="row"><button class="primary" id="cAdd">Add to build</button></div>
+          <p class="hint">Use 0U for things that don't take rack space, like drives or cables.</p>
+        </details>
+      </div>
+    </aside>
+
+    <main class="stack">
+      <div class="tabs" role="tablist"><button id="tab-upgrade" data-tab="upgrade" role="tab">Recommended plan</button><button id="tab-budget" data-tab="budget" role="tab">Budget build</button><button id="tab-stepup" data-tab="stepup" role="tab">Step-up build</button></div>
+      <div class="panel">
+        <div class="toolbar"><h2>Buying steps</h2><span class="hint" id="stepSum"></span></div>
+        <div class="budget"><label class="f" for="perCheck">Rack money per paycheck<input id="perCheck" type="number" min="0" step="1"></label><p class="hint" id="budgetHint"></p></div>
+        <div id="inflight"></div>
+        <div class="steps" id="steps"></div>
+      </div>
+      <div class="panel">
+        <div class="toolbar"><h2 id="rackTitle">Rack</h2><div class="row" style="flex:0 0 auto"><button id="restore">Reset to suggested</button><button id="reset">Clear build</button></div></div>
+        <div class="rack-area" style="margin-top:12px">
+          <div class="rack" id="rack"></div>
+          <div class="side">
+            <div class="selbox" id="selbox"></div>
+            <div>
+              <div class="hint" style="margin-bottom:4px">Rack fill</div>
+              <div class="meter"><i id="fill" style="width:0"></i></div>
+            </div>
+            <div id="warns"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="toolbar"><h2>Parts list</h2><button id="copy">Copy list</button></div>
+        <div class="phases" id="phases"></div>
+        <div class="tbl-wrap"><table>
+          <thead><tr><th>Part</th><th>Where</th><th>Phase</th><th class="n">Qty</th><th class="n">Watts ea</th><th class="n">Price ea</th><th class="n">Line</th><th></th></tr></thead>
+          <tbody id="parts"></tbody>
+          <tfoot><tr><td colspan="6">Total</td><td class="n" id="tTot">$0</td><td></td></tr></tfoot>
+        </table></div>
+        <p class="foot" id="copyMsg">Before buying any 10G card, check that each machine has a free PCIe slot of x4 or wider. Turn on scheduled snapshots on the NAS now; they cost nothing. Your NH-D15 is too tall for these 4U cases, so it is not used here. Your existing server parts, including motherboards, RAM and your desktop ATX PSUs, are counted at $0; only the new case is priced. Fiber-first: SFP+ cards and DACs inside the rack, SR optics and OM4 fiber for runs out of it. Electricity uses your rate of $0.128 per kWh, running 24/7. Prices are from October 2026 listings and may change.</p>
+      </div>
+    </main>
+  </div>
+  <section id="viewApps" hidden></section>
+</div>
+<textarea id="clip" aria-hidden="true"></textarea>
+
+<script>
+const RACKS=[
+ {id:"w9",name:"9U wall-mount cabinet",u:9,p:120},
+ {id:"o12",name:"12U 4-post open frame",u:12,p:140},
+ {id:"o15",name:"15U 4-post open frame",u:15,p:170},
+ {id:"o18",name:"18U 4-post open frame",u:18,p:200},
+ {id:"st18",name:"StarTech 4POSTRACK18U",u:18,p:370},
+ {id:"sys22",name:"Sysracks 22U open frame",u:22,p:234},
+ {id:"c22",name:"22U enclosed cabinet",u:22,p:420},
+ {id:"o25",name:"25U 4-post open frame",u:25,p:260},
+ {id:"o42",name:"42U 4-post open frame",u:42,p:400},
+ {id:"srw15",name:"Sysracks SRW 15.900 enclosed, glass door",u:15,p:475},
+ {id:"pr18",name:"Sysracks PR 18.900 enclosed, mesh + fans",u:18,p:631},
+ {id:"tl18",name:"Tripp Lite SR18UB enclosed",u:18,p:1061},
+ {id:"srf18",name:"Sysracks SRF 18.6.10 enclosed, glass + fans, PDU + shelf incl.",u:18,p:837.5},
+ {id:"srf22",name:"Sysracks SRF 22.6.10 enclosed, glass + fans, PDU + shelf incl.",u:22,p:887.5},
+ {id:"srf27",name:"Sysracks SRF 27.6.10 enclosed, glass + fans, PDU + shelf incl.",u:27,p:950},
+ {id:"none",name:"Rack I already own",u:24,p:0}
+];
+const CATS={network:"Networking",server:"Servers & chassis",power:"Power",shelf:"Shelves",mgmt:"Panels & cooling",acc:"Drives & accessories (0U)"};
+const CAT=[
+ ["lcpanel","network","1U LC fiber adapter panel",1,0,35],
+ ["patch24","network","24-port Cat6 keystone patch panel",1,0,38],
+ ["brush","network","FS.com 1U brush panel",1,0,25],
+ ["crs309","network","MikroTik CRS309 8x SFP+ (fanless)",1,23,269],
+ ["crs305","network","MikroTik CRS305 4x SFP+ (on shelf)",1,10,149],
+ ["crs310","network","MikroTik CRS310 8x 2.5G + 2x SFP+",1,20,219],
+ ["sg3428","network","TP-Link TL-SG3428 24-port gigabit",1,20,215],
+ ["usw24","network","UniFi USW-24 24-port gigabit",1,25,225],
+ ["usxagg","network","UniFi USW-Aggregation 8x SFP+",1,20,269],
+ ["udm","network","UniFi Dream Machine Pro",1,33,379],
+ ["udmmax","network","UniFi Dream Machine Pro Max",1,35,599],
+ ["protectli","network","Protectli VP2440e on 1U shelf",1,15,529],
+ ["l4500","server","Rosewill RSV-L4500U 4U 15-bay",4,140,230],
+ ["r4100","server","Rosewill RSV-R4100U 4U 7-bay",4,120,130],
+ ["l4412","server","Rosewill RSV-L4412U 4U 12 hot-swap",4,140,400],
+ ["cx4712","server","Sliger CX4712 4U 10 hot-swap",4,140,498],
+ ["rm44","server","SilverStone RM44 4U",4,120,400],
+ ["sm846","server","Used 24-bay 4U storage server",4,180,450],
+ ["mini","server","1U mini PC shelf (holds 2-3)",1,0,35],
+ ["cp1500","power","CyberPower CP1500PFCRM2U UPS",2,25,360],
+ ["smt1500","power","APC SMT1500RM2UC UPS",2,25,927],
+ ["pdu1u","power","8-outlet 1U PDU",1,0,45],
+ ["pdu0","power","Vertical 0U PDU strip",0,0,70],
+ ["sh1","shelf","1U vented shelf",1,0,30],
+ ["sh2","shelf","2U cantilever shelf",2,0,40],
+ ["sl1","shelf","1U sliding keyboard drawer",1,0,90],
+ ["blank1","mgmt","1U blank panel",1,0,8],
+ ["blank2","mgmt","2U blank panel",2,0,12],
+ ["cm1","mgmt","1U horizontal cable manager",1,0,20],
+ ["fan1","mgmt","1U fan tray (thermostat)",1,20,80],
+ ["nic82599","acc","Intel 82599 10G SFP+ card",0,5,31],
+ ["x710","acc","Intel X710-DA2 dual SFP+ card",0,7,124],
+ ["sr","acc","10G SR optic, Intel-coded",0,1,18],
+ ["om4","acc","OM4 LC-LC duplex fiber cord, 15 m",0,0,25],
+ ["dac","acc","10G SFP+ DAC cable, 1 m",0,0,16],
+ ["hba","acc","LSI 9300-8i HBA (refurb, IT mode)",0,10,100],
+ ["d9l","acc","Noctua NH-D9L cooler (est.)",0,0,70],
+ ["hdd20","acc","20TB IronWolf Pro drive",0,7,840],
+ ["exos18","acc","18TB Exos drive",0,7,420],
+ ["istar","acc","iStarUSA TC-RAIL-26 rails",0,0,64],
+ ["gdrail","acc","GD rails for Sliger",0,0,129],
+ ["rms05","acc","SilverStone RMS05-22 rails",0,0,109],
+ ["nuts","acc","M6 cage nuts & screws, 50 pack",0,0,15],
+ ["patch","acc","Cat6 patch cables, 1 ft, 10 pack",0,0,20],
+ ["caster","acc","Rack caster set",0,0,30],
+ ["srf27","acc","Closed cabinet: Sysracks SRF 27.6.10 (move everything in)",0,0,950],
+ ["srf18x","acc","Optional: Sysracks SRF 18.6.10 so rack 2 matches",0,0,837.5],
+ ["arc12","acc","Arctic P12 Pro LN 120mm PWM fans, 5-pack",0,0,19.59],
+ ["split3","acc","3-way 4-pin PWM fan splitter cable",0,0,5.99],
+ ["arc8","acc","Arctic P8 PWM PST 80mm fan (est.)",0,0,8],
+ ["fhub","acc","PWM fan hub, SATA powered (est.)",0,0,12],
+ ["nf12","acc","Optional: Noctua NF-A12x25 PWM 120mm fan (est.)",0,0,33],
+ ["nf8","acc","Optional: Noctua NF-A8 PWM 80mm fan (est.)",0,0,20],
+ ["dnsbox","acc","Used mini PC for Pi-hole + Unbound (est.)",0,8,120],
+ ["guts","acc","Storage server guts: used CPU, board, 16GB RAM, PSU, boot SSD (est.)",0,0,350],
+ ["cloud","mgmt","AC Infinity CLOUDPLATE T1 exhaust fan",1,10,139],
+ ["shelfsw","network","MikroTik CRS305 on 1U shelf",1,10,179],
+ ["rack2","acc","Second cabinet, same model (est.)",0,0,631],
+ ["ups2","acc","UPS for rack 2, 2200VA+ (est., size to your PCs)",0,25,900],
+ ["offsite","acc","External drive for off-site backup copy (est.)",0,0,300],
+ ["gpucase","acc","4U case for full-size GPU (est.)",0,0,250],
+ ["dpaoc","acc","Fiber DisplayPort cable, 15 m (est.)",0,0,70],
+ ["usbfib","acc","USB 3 over fiber extender (est.)",0,0,180],
+ ["hub","acc","Powered USB hub with USB-C, 12 port (est.)",0,0,60]
+].map(([id,cat,name,u,w,p])=>({id,cat,name,u,w,p}));
+
+let S,W;
+const uid=()=>Math.random().toString(36).slice(2,9);
+const mk=(id,pos,extra={})=>{const c=CAT.find(x=>x.id===id);return {id:uid(),ref:c.id,cat:c.cat,name:c.name,u:c.u,w:c.w,p:c.p,qty:1,pos,...extra}};
+const own=(name,u,w,pos)=>({id:uid(),cat:"custom",name,u,w,p:0,qty:1,pos});
+function presets(){const p=presetsRaw();for(const k in p)p[k].items.forEach((it,i)=>it.id=k+"-"+i+"-"+(it.ref||"own"));return p}
+function presetsRaw(){const P=(n,x)=>({...x,ph:n});return {
+  budget:{rack:"srf27",rate:0.128,target:null,sel:null,items:[
+    P(1,mk("shelfsw",17)),P(1,mk("l4500",11,{name:"Rosewill RSV-L4500U: TrueNAS (your mobo, CPU, RAM, PSU)",w:180})),P(1,mk("cp1500",1)),
+    P(1,mk("istar",null)),P(1,mk("nic82599",null,{qty:2,name:"Intel 82599 SFP+ card (NAS + your PC)"})),P(1,mk("dac",null,{name:"10G SFP+ DAC, 1 m (NAS)"})),P(1,mk("sr",null,{qty:2})),P(1,mk("om4",null)),P(1,mk("nuts",null)),P(4,mk("offsite",null)),
+    P(2,mk("lcpanel",18)),P(2,mk("brush",16)),P(2,mk("cm1",15)),P(2,mk("l4500",7,{name:"Rosewill RSV-L4500U: Minecraft host (your mobo, CPU, RAM, PSU)",w:150})),P(2,mk("istar",null)),
+    P(3,mk("l4500",3,{name:"Rosewill RSV-L4500U: storage + backup server (receives NAS snapshots)",w:120})),P(3,mk("hba",null)),P(3,mk("exos18",null,{qty:4,name:"18TB Exos drive (buy as prices drop)"})),P(3,mk("istar",null)),
+    P(4,mk("rack2",null)),P(4,mk("ups2",null)),P(4,mk("gpucase",null,{qty:2})),P(4,mk("dpaoc",null,{qty:4})),P(4,mk("usbfib",null,{qty:2})),P(4,mk("hub",null,{qty:4}))
+  ]},
+  upgrade:{rack:"sys22",rackPh:2,rate:0.128,target:null,sel:null,
+    notes:{1:"Buy the UPS first. It protects the NAS right away, lying flat on the floor or a shelf until the cabinet arrives. Plug the NAS into it and turn on TrueNAS's UPS service.",
+      2:"Order the Sysracks 22U open frame and set its depth to about 29-30 in so the 26 in rails fit. Mount the UPS at U1-2 and put your current switch and router on the shelf. Cage nuts come with it.",
+      3:"Write down each NAS drive's serial number, then move the NAS into the Rosewill L4500U and mount it on its rails at U12-15. Swap its 6 stock 120mm and 2 stock 80mm fans for the quiet Arctics on the fan hub, and set a BIOS fan curve that keeps drives under about 40-45 C. These fans stop completely below 5% PWM, so set the curve's lowest point above that.",
+      4:"Your Minecraft server is shut down for now, so this step can wait until you bring it back. Move the Minecraft host into the R4100U at U8-11 and set it up as a UPS client. Add the brush panel and cable manager. Use the spare Arctic 120mm fans from step 3 in this case, on the 3-way splitter into one motherboard fan header; check how many fans it needs first.",
+      5:"Set up the mini PC with Pi-hole + Unbound and put it on the shelf. Point your router's DNS at it.",
+      6:"Install an SFP+ card in the NAS and one in your PC. Connect them with the two SR optics and the OM4 fiber cord. Your PC now talks to the NAS at 10G.",
+      7:"Mount the CRS309 at U20. Move your PC's fiber from the NAS to the switch, and connect the NAS to the switch with the DAC.",
+      8:"Build the storage + backup server in the L4500U at U4-7 with the used parts and HBA. Connect it to the switch with its SFP+ card and DAC. Swap its stock fans for quiet Arctics the same way as the NAS.",
+      9:"Install 2 drives and create a mirror pool. Set up a replication task on the NAS that sends its snapshots here, and point Minecraft backups at it.",
+      10:"Add 2 more drives as a second mirror to the same pool. This doubles the space with no rebuild.",
+      11:"Install an SFP+ card in your husband's PC, run his fiber cord, and mount the LC panel at U22.",
+      12:"Swap the NAS's single-port card for the dual-port X710. Keep the old card as a spare or sell it.",
+      13:"Only when your ISP offers 10G. Mount the router at U17, then give the Minecraft host its SFP+ card and DAC.",
+      12:"Move everything from the open rack into the closed SRF 27.6.10, keeping the same U positions. Its fans, PDU and shelf come with it. The empty open rack becomes rack 2 for the gaming PCs.",
+      13:"Install OPNsense on the Protectli and put it on the shelf at U17 in place of your current router. Plug the modem into its WAN port and your fiber switch into one of its SFP+ ports, so it is already ready for 10G internet. Turn on CrowdSec to block scanners and brute-force attempts. Real DDoS protection still comes from TCPShield or a Cloudflare tunnel in front of anything public.",
+      15:"Set up the old open rack as rack 2 near a different breaker from rack 1. Size this UPS to both gaming PCs' real power draw before buying.",
+      16:"Move each gaming PC into its 4U case. Check each GPU's length against the case first.",
+      17:"Run fiber DisplayPort cables and the USB-over-fiber extender to your desk, then add powered hubs there.",
+      18:"Same as step 15, for your husband's desk.",
+      19:"Nothing here is needed to finish rack 1. The experiment box is a used mini PC for Proxmox, so you can try things like the Pi-hole + Unbound project without touching the NAS. The NAS card upgrade is a nice-to-have, and the 10G internet parts only matter once your ISP offers 10G. Buy any of it whenever you want."},
+    phases:{1:"1: UPS",2:"2: Cabinet",3:"3: Rack the NAS",4:"4: Rack the Minecraft host",6:"5: First fiber link (NAS to your PC)",7:"6: Fiber switch",
+      8:"7: Storage + backup server",9:"8: First 2 drives (mirror)",10:"9: Next 2 drives",11:"10: Husband's PC on fiber",12:"11: Closed cabinet",13:"12: Firewall (OPNsense)",
+      15:"13: Rack 2 UPS",16:"14: Gaming PC cases",17:"15: Your PC fiber video + USB",18:"16: Husband's PC fiber video + USB",19:"Later / optional"},items:[
+    
+    P(1,mk("cp1500",1)),P(3,mk("l4500",12,{name:"Rosewill RSV-L4500U: TrueNAS (your mobo, CPU, RAM, PSU, cooler)",w:85})),P(3,mk("istar",null)),P(3,mk("arc12",null,{qty:2})),P(3,mk("arc8",null,{qty:2})),P(3,mk("fhub",null)),
+    P(2,mk("sh1",null,{u:0,name:"1U vented shelf for current network gear"})),P(2,own("Your current switch/router, gigabit copper until fiber in step 5 (on the 1U shelf)",1,20,21)),
+    P(4,mk("r4100",8,{name:"Rosewill RSV-R4100U: Minecraft host (your parts, boot + storage drive)",w:70})),P(4,mk("istar",null)),P(19,mk("dnsbox",null,{name:"Experiment box: used mini PC for Proxmox (DNS project, VMs, testing) (est.)"})),P(4,mk("split3",null)),P(4,mk("brush",19)),P(4,mk("cm1",18)),P(4,mk("blank1",16)),
+    P(6,mk("nic82599",null,{qty:2,name:"Intel 82599 SFP+ card (NAS + your PC, direct link)"})),P(6,mk("sr",null,{qty:2})),P(6,mk("om4",null)),
+    P(7,mk("crs309",20,{name:"MikroTik CRS309 8x SFP+ (your PC's fiber moves here)"})),P(7,mk("dac",null,{name:"10G SFP+ DAC, 1 m (NAS to switch)"})),
+    P(8,mk("l4500",4,{name:"Rosewill RSV-L4500U: storage + backup server (NAS snapshots + Minecraft backups)",w:55})),P(8,mk("guts",null)),P(8,mk("istar",null)),P(8,mk("hba",null)),P(8,mk("arc12",null)),P(8,mk("arc8",null,{qty:2})),P(8,mk("fhub",null)),
+    P(8,mk("nic82599",null,{name:"Intel 82599 SFP+ card (storage server)"})),P(8,mk("dac",null,{name:"10G SFP+ DAC, 1 m (storage server)"})),
+    P(9,mk("exos18",null,{qty:2,name:"18TB Exos drive (start as a mirror pair)"})),
+    P(10,mk("exos18",null,{qty:2,name:"18TB Exos drive (add as a second mirror pair)"})),
+    P(11,mk("nic82599",null,{name:"Intel 82599 SFP+ card (husband's PC)"})),P(11,mk("sr",null,{qty:2})),P(11,mk("om4",null)),P(11,mk("lcpanel",22)),
+    P(19,mk("x710",null,{name:"Upgrade: Intel X710-DA2 dual SFP+ for TrueNAS"})),
+    P(19,mk("udmmax",null,{u:0,w:0,name:"Optional: UniFi Dream Machine Pro Max, only if the firewall can't keep up with 10G internet"})),P(19,mk("nic82599",null,{name:"Intel 82599 SFP+ card (Minecraft host)"})),P(19,mk("dac",null,{name:"10G SFP+ DAC, 1 m (Minecraft host)"})),
+    P(12,mk("srf27",null)),P(13,mk("protectli",17,{name:"Protectli VP2440e firewall (OPNsense) on 1U shelf"})),
+    P(15,mk("ups2",null)),
+    P(16,mk("gpucase",null,{qty:2})),
+    P(17,mk("dpaoc",null,{qty:2})),P(17,mk("usbfib",null)),P(17,mk("hub",null,{qty:2})),
+    P(18,mk("dpaoc",null,{qty:2})),P(18,mk("usbfib",null)),P(18,mk("hub",null,{qty:2})),
+    P(19,mk("nf12",null,{qty:6,name:"Optional: Noctua NF-A12x25 PWM 120mm fans for the NAS (est.)"})),P(19,mk("nf8",null,{qty:2,name:"Optional: Noctua NF-A8 PWM 80mm fans for the NAS (est.)"})),P(19,mk("srf18x",null)),P(19,mk("offsite",null)),P(19,mk("cx4712",null,{u:0,w:0,name:"Optional: Sliger CX4712 hot-swap case for TrueNAS"})),P(19,mk("gdrail",null,{name:"Optional: GD rails for Sliger"})),
+    P(19,mk("smt1500",null,{u:0,w:0,name:"Optional: APC SMT1500RM2UC (longer runtime)"}))
+  ]},
+  stepup:{rack:"tl18",rate:0.128,target:null,sel:null,items:[
+    P(1,mk("lcpanel",18)),P(1,mk("crs309",17)),P(1,mk("cx4712",11,{name:"Sliger CX4712: TrueNAS (your mobo, CPU, RAM, PSU)",w:180})),P(1,mk("gdrail",null)),P(1,mk("smt1500",1)),
+    P(1,mk("x710",null)),P(1,mk("nic82599",null,{qty:2})),P(1,mk("dac",null,{qty:3})),P(1,mk("sr",null,{qty:2})),P(1,mk("om4",null)),P(1,mk("nuts",null)),P(4,mk("offsite",null)),
+    P(2,mk("sg3428",16)),P(2,mk("protectli",15)),P(2,mk("rm44",7,{name:"SilverStone RM44: Minecraft host (your mobo, CPU, RAM, PSU)",w:150})),P(2,mk("rms05",null)),P(2,mk("patch",null)),
+    P(3,mk("cx4712",3,{name:"Sliger CX4712: storage + backup server (receives NAS snapshots)",w:120})),P(3,mk("gdrail",null)),P(3,mk("hba",null)),P(3,mk("exos18",null,{qty:4,name:"18TB Exos drive (buy as prices drop)"})),
+    P(4,mk("rack2",null,{name:"Second Tripp Lite SR18UB (est.)",p:1061})),P(4,mk("ups2",null)),P(4,mk("gpucase",null,{qty:2})),P(4,mk("dpaoc",null,{qty:4})),P(4,mk("usbfib",null,{qty:2})),P(4,mk("hub",null,{qty:4}))
+  ]}
+}}
+const pmax=()=>Math.max(4,...Object.keys(S.phases||{}).map(Number),...S.items.map(i=>i.ph||1));
+const NE=q=>"https://www.newegg.com/p/pl?d="+encodeURIComponent(q),EB=q=>"https://www.ebay.com/sch/i.html?_nkw="+encodeURIComponent(q);
+const BUY={sys22:"https://www.newegg.com/sysracks-22u-dor-4-post-open-frame-server-rack/p/2BA-004S-00023",srf18x:"https://sysracks.com/product/18u-39-depth-it-telecom-cabinet-srf-18-6-10/",srf27:"https://sysracks.com/product/27u-39-depth-it-telecom-cabinet-srf-27-6-10/",srf22:"https://sysracks.com/product/22u-39-depth-it-telecom-cabinet-srf-22-6-10/",srf18:"https://sysracks.com/product/18u-39-depth-it-telecom-cabinet-srf-18-6-10/",
+ l4500:"https://www.newegg.com/rosewill-rsv-l4500u-black/p/N82E16811147328",istar:"https://www.bhphotovideo.com/c/product/834849-REG/iStarUSA_TC_RAIL_26_Sliding_Rail_Kit_26.html",
+ cp1500:"https://www.bhphotovideo.com/c/product/1709939-REG/cyberpower_cp1500pfcrm2u_cp15_1500va_100w_2u_rackmount.html",crs309:"https://www.microcom.us/crs3091g8s-in.html",
+ crs310:"https://mikrotik.com/product/crs310_8g_2s_in",sg3428:"https://www.bhphotovideo.com/c/product/1680700-REG/tp_link_tl_sg3428_jetstream_24_port_gigabit_l2.html",
+ protectli:"https://protectli.com/product/vp2440e/",cx4712:"https://www.avadirect.com/CX4712-25-4U-Rackmount-Chassis-ATX-PSU-Support-360mm-AIO-Support-2x-5-25-10x-3-5-6x-2-5-Black/Product/16426792",
+ gdrail:"https://www.avadirect.com/Rackmount-General-Devices-Rail-Kit-26in-Slide-with-All-Extensions-Min-27in-Max-43in-REV-B/Product/19690222",rm44:"https://www.newegg.com/p/2AM-006F-001D2",
+ rms05:"https://www.newegg.com/silverstone-rms05-22-rack-rail/p/N82E16816640001",smt1500:"https://www.newegg.com/apc-smt1500rm2uc-nema-5-15r/p/N82E16842301691",brush:"https://www.fs.com/products/29033.html",
+ cloud:"https://www.bhphotovideo.com/c/product/1370952-REG/ac_infinity_ai_cpt1_cloudplate_t1_quiet_rack.html",exos18:"https://diskprices.com/?locale=us&condition=new&capacity=16-24&disk_types=internal_hdd"};
+const FIND={arc12:"https://www.amazon.com/s?k=ARCTIC+P12+Pro+LN+5+Pack",split3:"https://www.amazon.com/s?k=3+way+4+pin+PWM+fan+splitter",arc8:NE("Arctic P8 PWM PST"),fhub:NE("PWM fan hub SATA powered"),nf12:NE("Noctua NF-A12x25 PWM"),nf8:NE("Noctua NF-A8 PWM"),r4100:NE("Rosewill RSV-R4100U"),l4412:NE("Rosewill RSV-L4412U"),shelfsw:NE("MikroTik CRS305-1G-4S+IN"),nic82599:EB("Intel 82599 SFP+ 10G network card"),x710:EB("Intel X710-DA2"),
+ sr:NE("10GBASE-SR SFP+ transceiver Intel compatible"),om4:NE("OM4 LC LC duplex fiber patch cable 15m"),dac:NE("10G SFP+ DAC cable 1m passive"),lcpanel:NE("1U LC fiber adapter panel"),
+ hba:EB("LSI 9300-8i IT mode"),cm1:NE("1U horizontal cable management panel"),blank1:NE("1U rack blank panel"),blank2:NE("2U rack blank panel"),nuts:NE("M6 cage nuts screws 50"),
+ dnsbox:EB("Lenovo ThinkCentre Tiny mini PC"),guts:EB("used desktop motherboard CPU RAM combo"),udmmax:"https://store.ui.com/",ups2:NE("2200VA rackmount UPS pure sine wave"),
+ rack2:"https://sysracks.com/product/18u-39-depth-it-telecom-cabinet-srf-18-6-10/",gpucase:NE("4U rackmount ATX chassis full size GPU"),dpaoc:NE("fiber optic DisplayPort 1.4 cable 15m"),
+ usbfib:NE("USB 3.0 fiber optic extender"),hub:NE("powered USB 3 hub 12 port USB-C"),offsite:NE("external hard drive 16TB"),sh1:NE("1U vented rack shelf"),patch:NE("Cat6 patch cable 1 ft 10 pack"),
+ patch24:NE("24 port Cat6 keystone patch panel"),sh2:NE("2U cantilever rack shelf"),fan1:NE("1U rack fan tray thermostat"),pdu1u:NE("1U rackmount PDU 8 outlet"),pdu0:NE("0U vertical PDU"),
+ ch4u15:NE("Rosewill RSV-L4500U"),ch4u8:NE("4U ATX rackmount chassis"),ch2u:NE("2U short depth ATX chassis"),sm846:EB("Supermicro 846 4U 24 bay"),udm:NE("UniFi Dream Machine Pro"),usw24:NE("UniFi USW-24"),
+ usxagg:NE("UniFi USW-Aggregation"),hdd20:NE("IronWolf Pro 20TB"),mini:NE("1U rack shelf mini PC"),sl1:NE("1U keyboard drawer rack"),caster:NE("server rack casters"),crs305:NE("MikroTik CRS305-1G-4S+IN"),
+ rails:NE("universal rack rails")};
+const PRICE={},ORD={};let DB=null,dbState="connecting";
+const linkFor=i=>(PRICE[i.ref]&&/^https?:\/\//.test(PRICE[i.ref].url||""))?{u:PRICE[i.ref].url,t:"Buy"}:BUY[i.ref]?{u:BUY[i.ref],t:"Buy"}:FIND[i.ref]?{u:FIND[i.ref],t:"Find"}:null;
+const PN=n=>(S.phases||PHASE)[n]||("Phase "+n);
+const PHASE={1:"Phase 1: now",2:"Phase 2: Minecraft move",3:"Phase 3: storage server",4:"Phase 4: rack 2, gaming PCs"};
+const LABEL={upgrade:"Recommended plan",budget:"Budget build",stepup:"Step-up build"};
+const KEY="rackBuilder.v32";
+function load(){try{const r=localStorage.getItem(KEY);if(r)return JSON.parse(r)}catch(e){}return {active:"upgrade",builds:presets()}}
+let planTimer=null,planLoaded=false;
+function save(){try{localStorage.setItem(KEY,JSON.stringify(W))}catch(e){}
+  if(DB&&planLoaded){clearTimeout(planTimer);planTimer=setTimeout(()=>{DB.doc("plan/state").set({key:KEY,w:JSON.parse(JSON.stringify(W))}).catch(()=>{})},1500)}}
+W=load();S=W.builds[W.active];
+
+const $=id=>document.getElementById(id);
+const money=n=>"$"+Math.round(n).toLocaleString();
+const rack=()=>{const r=RACKS.find(r=>r.id===S.rack)||RACKS[3];return S.rackP!=null?{...r,p:S.rackP}:r};
+
+function occupied(exceptId){const m=new Set();S.items.forEach(i=>{if(i.pos&&i.u>0&&i.id!==exceptId)for(let k=0;k<i.u;k++)m.add(i.pos+k)});return m}
+function fits(pos,u,exceptId){const N=rack().u;if(pos<1||pos+u-1>N)return false;const o=occupied(exceptId);for(let k=0;k<u;k++)if(o.has(pos+k))return false;return true}
+function firstFit(u,exceptId){for(let top=rack().u;top>=u;top--){const p=top-u+1;if(fits(p,u,exceptId))return p}return null}
+
+function addItem(base,qty=1){
+  const it={id:uid(),ref:base.id,cat:base.cat,name:base.name,u:base.u,w:base.w,p:base.p,qty,pos:null,ph:1};
+  if(it.u>0){
+    let p=null;
+    if(S.target){const tp=S.target-it.u+1;if(fits(tp,it.u))p=tp}
+    if(p===null)p=firstFit(it.u);
+    if(p===null){flash("No room for "+it.u+"U. Pick a bigger rack or remove something.");return}
+    it.pos=p;S.target=null;S.sel=it.id;
+  }else{
+    const same=S.items.find(i=>i.u===0&&i.name===it.name&&i.p===it.p);
+    if(same){same.qty+=qty;render();return}
+  }
+  S.items.push(it);render();
+}
+let flashMsg="";function flash(m){flashMsg=m;render();setTimeout(()=>{flashMsg="";render()},3500)}
+
+function refit(){S.items.forEach(i=>{if(i.u>0&&i.pos&&!fits(i.pos,i.u,i.id))i.pos=firstFit(i.u,i.id)})}
+
+function renderCatalog(){
+  const q=$("q").value.trim().toLowerCase();let h="";
+  for(const k in CATS){const list=CAT.filter(c=>c.cat===k&&(!q||c.name.toLowerCase().includes(q)));if(!list.length)continue;
+    h+=`<div class="cat-h">${CATS[k]}</div>`;
+    list.forEach(c=>{h+=`<div class="item"><div class="nm"><span class="u-tag ${c.u?"":"zero"}">${c.u}U</span>${c.name}</div><div class="meta">${money(c.p)}${c.w?" · "+c.w+" W":""}</div><button data-add="${c.id}" aria-label="Add ${c.name}">Add</button></div>`})}
+  $("catalog").innerHTML=h||'<p class="hint">No parts match. Add it as a custom part below.</p>';
+}
+
+function applyLive(){
+  const num=v=>typeof v==="number"&&isFinite(v)&&v>=0;
+  CAT.forEach(c=>{const L=PRICE[c.id];if(L&&num(L.price))c.p=L.price});
+  RACKS.forEach(r=>{const L=PRICE[r.id];if(L&&num(L.price))r.p=L.price});
+  for(const k in W.builds)W.builds[k].items.forEach(i=>{const L=PRICE[i.ref];if(L&&num(L.price)&&!i.pEdited)i.p=L.price});
+}
+function render(){const ae=document.activeElement,aid=ae&&ae.id,sel=ae&&typeof ae.selectionStart==="number"?ae.selectionStart:null;
+  render0();
+  if(aid){const el=document.getElementById(aid);if(el&&el!==document.activeElement){el.focus();try{if(sel!=null)el.setSelectionRange(sel,sel)}catch(e){}}}}
+function render0(){
+  applyLive();
+  const R=rack(),N=R.u;
+  $("rackSel").value=S.rack;$("rate").value=S.rate;
+  $("rackTitle").textContent=R.name;
+  for(const k in LABEL)$("tab-"+k).setAttribute("aria-selected",W.active===k?"true":"false");
+  // rails + bay
+  const rows=`repeat(${N},26px)`;
+  let rl="",bay="";
+  for(let u=N;u>=1;u--){rl+=`<div>${u}</div>`}
+  const occ=occupied();
+  for(let u=N;u>=1;u--){if(!occ.has(u))bay+=`<button class="slot${S.target===u?" target":""}" data-slot="${u}" style="grid-row:${N-u+1}" aria-label="Empty slot U${u}">${S.target===u?"next item lands here":"empty"}</button>`}
+  S.items.filter(i=>i.pos&&i.u>0).forEach(i=>{
+    const top=i.pos+i.u-1;
+    bay+=`<button class="dev c-${i.cat}${S.sel===i.id?" sel":""}" data-dev="${i.id}" style="grid-row:${N-top+1}/span ${i.u}">${i.w?'<span class="led"></span>':""}<span class="dn">${esc(i.name)}</span><span class="du">${i.u}U</span></button>`});
+  $("rack").innerHTML=`<div class="rail" style="grid-template-rows:${rows}">${rl}</div><div class="bay" style="grid-template-rows:${rows}">${bay}</div><div class="rail r" style="grid-template-rows:${rows}">${rl}</div>`;
+
+  // selection box
+  const sel=S.items.find(i=>i.id===S.sel&&i.pos);
+  $("selbox").innerHTML=sel?`<b>${esc(sel.name)}</b><div class="hint">U${sel.pos}${sel.u>1?"–U"+(sel.pos+sel.u-1):""} · ${sel.w} W · ${money(sel.p)}</div><div class="btns"><button data-mv="1">Move up</button><button data-mv="-1">Move down</button><button data-del="${sel.id}">Remove</button></div>`
+    :`<div class="hint">Click a device to move or remove it. Click an empty U to set where the next item goes.</div>`;
+
+  // totals
+  const used=S.items.reduce((a,i)=>a+(i.pos?i.u:0),0);
+  const watts=S.items.reduce((a,i)=>a+i.w*i.qty,0);
+  const total=R.p+S.items.reduce((a,i)=>a+i.p*i.qty,0);
+  $("sU").textContent=`${used}/${N}U`;$("sW").textContent=`${watts} W`;
+  $("sE").textContent=`$${(watts/1000*24*30.4*S.rate).toFixed(2)}/mo`;$("sT").textContent=money(total);
+  $("fill").style.width=Math.min(100,used/N*100)+"%";
+
+  const ups=S.items.filter(i=>/UPS/.test(i.name));
+  let w=[];
+  const lost=S.items.filter(i=>i.u>0&&!i.pos);
+  if(lost.length)w.push(`${lost.length} item(s) don't fit in this rack: ${lost.map(i=>esc(i.name)).join(", ")}.`);
+  if(ups.length&&watts>900*ups.length)w.push(`Load of ${watts} W is over a 1500VA UPS's ~900 W rating.`);
+  if(flashMsg)w.push(esc(flashMsg));
+  $("warns").innerHTML=w.map(x=>`<div class="warn">${x}</div>`).join("");
+
+  // parts table
+  let t=`<tr><td>${esc(R.name)}</td><td><span class="pos">frame</span></td><td><span class="pos">${S.rackPh||1}</span></td><td class="n">1</td><td class="n">–</td><td class="n"><input id="rp" type="number" min="0" value="${R.p}" data-rackp aria-label="Rack price"></td><td class="n">${money(R.p)}</td><td></td></tr>`;
+  const sorted=[...S.items].sort((a,b)=>((a.ph||1)-(b.ph||1))||((b.pos||-1)-(a.pos||-1)));
+  sorted.forEach(i=>{
+    const where=i.u===0?"0U / loose":i.pos?`U${i.pos}${i.u>1?"–"+(i.pos+i.u-1):""}`:"won't fit";
+    t+=`<tr><td>${esc(i.name)}</td><td><span class="pos">${where}</span></td>
+    <td><select id="ph-${i.id}" data-f="ph" data-id="${i.id}" aria-label="Phase">${[...Array(pmax()+1).keys()].map(x=>x+1).map(n=>`<option value="${n}"${(i.ph||1)===n?" selected":""}>${n}</option>`).join("")}</select></td>
+    <td class="n">${i.u===0?`<input class="q" id="q-${i.id}" type="number" min="1" value="${i.qty}" data-f="qty" data-id="${i.id}" aria-label="Quantity">`:"1"}</td>
+    <td class="n"><input id="w-${i.id}" type="number" min="0" value="${i.w}" data-f="w" data-id="${i.id}" aria-label="Watts"></td>
+    <td class="n"><input id="p-${i.id}" type="number" min="0" value="${i.p}" data-f="p" data-id="${i.id}" aria-label="Price"></td>
+    <td class="n">${money(i.p*i.qty)}</td><td><button class="x" data-del="${i.id}" aria-label="Remove ${esc(i.name)}">✕</button></td></tr>`});
+  $("parts").innerHTML=t;
+  renderSteps(R);
+  const NP=pmax();const ps={};for(let n=1;n<=NP;n++)ps[n]=0;ps[S.rackPh||1]+=R.p;S.items.forEach(i=>ps[i.ph||1]+=i.p*i.qty);
+  const phUsed=new Set([1,...S.items.map(i=>i.ph||1)]);
+  let run=0;$("phases").innerHTML=[...Array(NP).keys()].map(x=>x+1).filter(n=>phUsed.has(n)).map(n=>{run+=ps[n];return `<div class="ph"><span>${PN(n)}</span><b>${money(ps[n])}</b><small>${money(run)} so far</small></div>`}).join("");$("tTot").textContent=money(total);
+  save();
+}
+const STAT=[["planned","Planned"],["ordered","Ordered"],["shipped","Shipped"],["delivered","Delivered"],["installed","Installed"]];
+const BOUGHT=new Set(["ordered","shipped","delivered","installed"]);
+const ordOf=id=>(DB?ORD[id]:(S.orders||{})[id])||{};
+function setOrd(id,patch){const cur={...ordOf(id),...patch,updated:new Date().toISOString()};
+  if(DB){ORD[id]=cur;DB.doc("orders/"+id).set(cur).catch(()=>flash("Couldn't save that order change. Try again."))}
+  else{S.orders=S.orders||{};S.orders[id]=cur}
+  render()}
+const trackUrl=t=>!t?"":/^https?:\/\//.test(t)?t:"https://www.google.com/search?q="+encodeURIComponent("track package "+t);
+const openOrd=new Set();let perCheck=null;
+function getPerCheck(){if(perCheck!=null)return perCheck;try{const v=localStorage.getItem("rb.perCheck");if(v!=null)return +v}catch(e){}return 70}
+const START=new Date(2026,9,6);
+const BOOSTS=[{w:7,add:11.88,why:"AirPods paid off"},{w:12,add:20.05,why:"DeWalt organizer paid off"},{w:21,add:20.80,why:"Perpay fully paid off"}];
+function rateAt(w,pc){let r=pc;BOOSTS.forEach(b=>{if(w>=b.w)r+=b.add});return r}
+function affordWeek(need){const pc=getPerCheck();if(need<=0)return 1;let t=0;for(let w=1;w<=1560;w++){t+=rateAt(w,pc);if(t>=need)return w}return null}
+function payDate(w){return new Date(START.getTime()+(w-1)*7*864e5)}
+function fmtDate(d){return d.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"})}
+function renderSteps(R){
+  const NP=pmax(),RP=S.rackPh||1,rid="rack-"+W.active;let h="",tot=0,got=0,firstOpen=null,need=0;const live=[];
+  const pc=getPerCheck();$("perCheck").value=pc;
+  for(let n=1;n<=NP;n++){
+    const list=S.items.filter(i=>(i.ph||1)===n);
+    const rows=(n===RP?[{id:rid,ref:S.rack,name:R.name,qty:1,p:R.p,bought:S.rackBought}]:[]).concat(list);
+    if(!rows.length)continue;
+    let cost=0,spent=0,done=0,left=0;
+    const body=rows.map(i=>{
+      const o=ordOf(i.id),st=o.status||(i.bought?"ordered":"planned"),line=i.p*i.qty;
+      const paid=o.paid!==undefined&&o.paid!==""&&isFinite(+o.paid)?+o.paid:null,isB=BOUGHT.has(st);
+      cost+=line;if(isB){done++;spent+=paid!=null?paid:line}else left+=line;
+      if(st==="ordered"||st==="shipped")live.push({i,o,st});
+      const L=linkFor(i),LP=PRICE[i.ref];
+      const chk=LP&&LP.checked&&!i.pEdited?`<small class="chk">price checked ${esc(String(LP.checked).slice(0,10))}</small>`:"";
+      const sel=`<select class="ost" id="os-${i.id}" data-ost="${i.id}" aria-label="Order status">${STAT.map(([v,t])=>`<option value="${v}"${v===st?" selected":""}>${t}</option>`).join("")}</select>`;
+      let row=`<div class="buy st-${st}">${sel}<span class="nm">${i.qty>1?i.qty+"× ":""}${esc(i.name)}${chk}</span>${L?`<a class="lk" href="${L.u}" target="_blank" rel="noopener">${L.t}</a>`:`<span class="lk none">owned</span>`}<span class="pr">${money(isB&&paid!=null?paid:line)}</span><button class="od" data-od="${i.id}" aria-expanded="${openOrd.has(i.id)}" title="Order details">⋯</button></div>`;
+      if(openOrd.has(i.id))row+=`<div class="oform">
+        <label class="f">Store<input id="of-${i.id}-store" data-of="${i.id}" data-k="store" value="${esc(o.store||"")}"></label>
+        <label class="f">Order #<input id="of-${i.id}-orderNo" data-of="${i.id}" data-k="orderNo" value="${esc(o.orderNo||"")}"></label>
+        <label class="f">Tracking # or link<input id="of-${i.id}-tracking" data-of="${i.id}" data-k="tracking" value="${esc(o.tracking||"")}"></label>
+        <label class="f">Paid $<input id="of-${i.id}-paid" data-of="${i.id}" data-k="paid" type="number" min="0" step="0.01" value="${esc(o.paid??"")}"></label>
+        <label class="f">Order date<input id="of-${i.id}-date" data-of="${i.id}" data-k="date" type="date" value="${esc(o.date||"")}"></label></div>`;
+      return row}).join("");
+    tot+=cost;got+=spent;if(!/optional/i.test(PN(n)))need+=left;
+    const opt=/optional/i.test(PN(n)),wk=opt?null:affordWeek(need),od=wk?payDate(wk):null,past=od&&od<=new Date();
+    const when=left===0?"bought":opt?"optional, no date":wk==null?"":past?"order now":`order ~${fmtDate(od)}`;
+    const orderNote=left>0&&od?`<p class="when">${past?"You should have the money for this step now.":"Order this step around "+fmtDate(od)+", once your savings cover it."}</p>`:"";
+    const complete=done===rows.length;if(!complete&&firstOpen===null)firstOpen=n;
+    const open=openSteps.has(n)||(firstOpen===n&&!closedSteps.has(n));
+    const note=S.notes&&S.notes[n]?`<p class="note">${esc(S.notes[n])}</p>`:"";
+    h+=`<details class="step${complete?" done":""}" data-ph="${n}"${open?" open":""}><summary><span class="sn">${esc(PN(n))}</span><span class="sc">${done}/${rows.length} ordered · <b>${money(cost)}</b> · <span class="when">${when}</span></span></summary><div class="sb">${orderNote}${note}${body}</div></details>`;
+  }
+  $("steps").innerHTML=h;$("stepSum").textContent=`${money(got)} spent of ${money(tot)}`;
+  const fw=affordWeek(need);
+  $("budgetHint").textContent=pc>0&&fw?`Saving ${money(pc)} a paycheck from Oct 6, 2026, plus about $53 more a week as your Perpay items get paid off (fully by late Feb 2027), covers everything except the optional extras (${money(need)}) by about ${fmtDate(payDate(fw))}. Assumes weekly paydays, no new Perpay purchases, and buying in step order.`:"Set an amount to see when each step fits.";
+  $("inflight").innerHTML=live.length?`<div class="inflight"><h3>On the way</h3>${live.map(({i,o,st})=>`<div class="ir"><span class="pill ${st}">${st}</span><span>${esc(i.name)}</span>${o.store?`<span class="hint">${esc(o.store)}</span>`:""}${o.orderNo?`<span class="when">#${esc(o.orderNo)}</span>`:""}${o.tracking?`<a class="lk" href="${esc(trackUrl(o.tracking))}" target="_blank" rel="noopener">Track</a>`:""}</div>`).join("")}</div>`:"";
+}
+const openSteps=new Set(),closedSteps=new Set();
+document.addEventListener("toggle",e=>{const d=e.target;if(!d.dataset||!d.dataset.ph)return;const n=+d.dataset.ph;if(d.open){openSteps.add(n);closedSteps.delete(n)}else{openSteps.delete(n);closedSteps.add(n)}},true);
+document.addEventListener("change",e=>{const el=e.target,d=el.dataset||{};
+  if(d.ost){const p={status:el.value};const o=ordOf(d.ost);if(el.value!=="planned"&&!o.date)p.date=new Date().toISOString().slice(0,10);setOrd(d.ost,p)}
+  else if(d.of){let v=el.value;if(d.k==="paid")v=v===""?"":Math.max(0,+v||0);setOrd(d.of,{[d.k]:v})}
+  else if(el.id==="perCheck"){perCheck=Math.max(0,+el.value||0);try{localStorage.setItem("rb.perCheck",perCheck)}catch(e){}if(DB)DB.doc("settings/budget").set({perCheck}).catch(()=>{});render()}
+});
+document.addEventListener("click",e=>{const b=e.target.closest("[data-od]");if(!b)return;const id=b.dataset.od;openOrd.has(id)?openOrd.delete(id):openOrd.add(id);render()});
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+// rack price override persists per rack
+document.addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;
+  if(b.dataset.tab){W.active=b.dataset.tab;S=W.builds[W.active];render()}
+  else if(b.id==="restore"){W.builds[W.active]=presets()[W.active];S=W.builds[W.active];render()}
+  else if(b.dataset.add){addItem(CAT.find(c=>c.id===b.dataset.add))}
+  else if(b.dataset.slot){const u=+b.dataset.slot;S.target=S.target===u?null:u;S.sel=null;render()}
+  else if(b.dataset.dev){S.sel=S.sel===b.dataset.dev?null:b.dataset.dev;S.target=null;render()}
+  else if(b.dataset.mv){const i=S.items.find(x=>x.id===S.sel);const np=i.pos+(+b.dataset.mv);if(fits(np,i.u,i.id)){i.pos=np;render()}else flash("Something is in the way.")}
+  else if(b.dataset.del){S.items=S.items.filter(i=>i.id!==b.dataset.del);if(S.sel===b.dataset.del)S.sel=null;render()}
+});
+document.addEventListener("change",e=>{
+  const el=e.target;
+  if(el.dataset.f){const i=S.items.find(x=>x.id===el.dataset.id);const v=Math.max(el.dataset.f==="qty"?1:0,+el.value||0);if(el.dataset.f==="p")i.pEdited=true;i[el.dataset.f]=v;render()}
+  else if("rackp" in el.dataset){S.rackP=Math.max(0,+el.value||0);render()}
+});
+$("rackSel").innerHTML=RACKS.map(r=>`<option value="${r.id}">${r.name} (${r.u}U)</option>`).join("");
+$("rackSel").addEventListener("change",e=>{S.rack=e.target.value;S.rackP=null;S.target=null;refit();render()});
+$("rate").addEventListener("change",e=>{S.rate=Math.max(0,+e.target.value||0);render()});
+$("q").addEventListener("input",renderCatalog);
+$("cAdd").addEventListener("click",()=>{
+  const name=$("cName").value.trim();if(!name){$("cName").focus();return}
+  addItem({cat:"custom",name,u:Math.max(0,Math.min(10,+$("cU").value||0)),w:Math.max(0,+$("cW").value||0),p:Math.max(0,+$("cP").value||0)});
+  $("cName").value="";
+});
+let armed=false;
+$("reset").addEventListener("click",e=>{
+  if(!armed){armed=true;e.target.textContent="Click again to clear";setTimeout(()=>{armed=false;e.target.textContent="Clear build"},3000);return}
+  armed=false;e.target.textContent="Clear build";S.items=[];S.sel=null;S.target=null;render();
+});
+$("copy").addEventListener("click",()=>{
+  const R=rack();const lines=[LABEL[W.active],`${R.name} (${R.u}U) - ${money(R.p)}`];
+  let lp=0;[...S.items].sort((a,b)=>((a.ph||1)-(b.ph||1))||((b.pos||-1)-(a.pos||-1))).forEach(i=>(i.ph||1)!==lp&&lines.push("",PN(lp=(i.ph||1)))||lines.push(`${i.qty>1?i.qty+"x ":""}${i.name}${i.pos?` [U${i.pos}]`:""} - ${money(i.p*i.qty)}`));
+  lines.push(`Total: ${$("sT").textContent} | ${$("sW").textContent} | ${$("sE").textContent}`);
+  const txt=lines.join("\n");
+  const done=()=>{$("copyMsg").textContent="Parts list copied."};
+  navigator.clipboard?.writeText(txt).then(done).catch(()=>{const c=$("clip");c.value=txt;c.select();try{document.execCommand("copy");done()}catch(e){}});
+});
+/* ---------- NAS apps ---------- */
+const APAL=["#4f7cac","#3f9b8a","#c0843a","#8a6bb1","#b9575a","#5b8f3e","#4b9cc1","#a8708f","#8f8a3a","#5c6bc0","#c26a3f","#3a8f6f"];
+let AP=null,apTimer=null;
+function apLoadLocal(){try{const r=localStorage.getItem("rb.apps");if(r)return JSON.parse(r)}catch(e){}return null}
+function apState(){if(!AP)AP=apLoadLocal()||{host:{name:"NAS",cpu:"",threads:16,ram:32,reserve:2},apps:[]};return AP}
+const nz=(v,d)=>{v=parseFloat(v);return isFinite(v)&&v>=0?v:d},f2=n=>String(Math.round(n*100)/100);
+let apMode=(()=>{try{return localStorage.getItem("rb.apMode2")||"cap"}catch(e){return "cap"}})();
+const sizeOf=a=>apMode==="use"&&typeof a.used==="number"?a.used:nz(a.ram,0);
+function apTotals(){const A=apState(),on=A.apps.filter(a=>a.on);const ram=on.reduce((s,a)=>s+sizeOf(a),0),cap=on.reduce((s,a)=>s+nz(a.ram,0),0),thr=on.reduce((s,a)=>s+nz(a.threads,0),0);return{on,ram,cap,thr,free:nz(A.host.ram,0)-nz(A.host.reserve,0)-ram}}
+function apRack(){const A=apState(),t=apTotals(),R=Math.max(1,nz(A.host.ram,32)),px=Math.max(7,Math.min(14,480/Math.max(R,nz(A.host.reserve,0)+t.ram)));let y=0,bl="";
+  t.on.forEach(a=>{const g=sizeOf(a);if(g<=0)return;const hh=g*px;bl+=`<div class="rb" style="top:${y*px}px;height:${hh}px;background:${esc(a.color||"#4f7cac")}" title="${esc(a.name)}: ${f2(g)} GB">${hh>=14?`<span>${esc(a.name)}</span><span>${g<1?Math.round(g*1024)+" MB":f2(g)+" GB"}</span>`:""}</div>`;y+=g});
+  const rs=nz(A.host.reserve,0);if(rs>0){bl+=`<div class="rb sys" style="top:${y*px}px;height:${rs*px}px">${rs*px>=14?`<span>TrueNAS system</span><span>${f2(rs)} GB</span>`:""}</div>`;y+=rs}
+  if(t.free>0)bl+=`<div class="rb arc" style="top:${y*px}px;height:${t.free*px}px">${t.free*px>=14?`<span>ZFS cache (ARC)</span><span>${f2(t.free)} GB</span>`:""}</div>`;
+  else if(t.free<0)bl+=`<div class="rb over" style="top:${R*px}px;height:${-t.free*px}px"><span>Over by</span><span>${f2(-t.free)} GB</span></div>`;
+  const T=Math.max(1,nz(A.host.threads,16)),sc=Math.max(T,t.thr);
+  return `<div class="ramrack"><div class="rt"><span>RAM</span><span>${f2(R)} GB</span></div><div class="rambay" style="height:${Math.max(R,R-t.free)*px}px">${bl}</div>
+  <div class="rt" style="margin-top:12px"><span>Thread caps</span><span>${f2(t.thr)} / ${f2(T)}</span></div><div class="tbar">${t.on.map(a=>nz(a.threads,0)>0?`<i style="width:${nz(a.threads,0)/sc*100}%;background:${esc(a.color||"#4f7cac")}" title="${esc(a.name)}"></i>`:"").join("")}</div></div>`}
+function liveHTML(){if(!LIVE||!LIVE.host)return"";const h=LIVE.host,g=v=>typeof v==="number"?(v/1073741824).toFixed(1)+" GB":"–";
+  return `<div class="stats" style="margin-bottom:10px"><div class="stat"><b>${typeof h.cpu==="number"?h.cpu.toFixed(1)+"%":"–"}</b><span>Live CPU</span></div><div class="stat"><b>${g(h.memUsed)}</b><span>Services</span></div><div class="stat"><b style="color:var(--good)">${g(h.arc)}</b><span>ZFS cache</span></div><div class="stat"><b>${typeof h.memTotal==="number"&&typeof h.memUsed==="number"?g(Math.max(0,h.memTotal-h.memUsed-(h.arc||0))):"–"}</b><span>Free of ${g(h.memTotal)}</span></div><div class="stat"><b>${new Date(LIVE.ts*1000).toLocaleTimeString()}</b><span>${LIVE.docker?"Updated every 10 s":"Docker stats off"}</span></div></div>`}
+function apStats(){const A=apState(),t=apTotals();const lvl=t.free<0?"bad":t.free<4?"accent":"good";
+  return `<div class="stats" style="margin-bottom:14px"><div class="stat"><b>${t.on.length} / ${A.apps.length}</b><span>Apps running</span></div><div class="stat"><b>${f2(t.ram)} GB</b><span>${apMode==="use"?"RAM apps use (limits "+f2(t.cap)+" GB)":"RAM limits"}</span></div><div class="stat"><b style="color:var(--${lvl})">${f2(Math.max(0,t.free))} GB</b><span>${t.free<0?"Over by "+f2(-t.free)+" GB":"Left for ZFS cache"}</span></div><div class="stat"><b>${f2(t.thr)} / ${f2(nz(A.host.threads,0))}</b><span>Thread caps</span></div></div>`}
+function apRow(a,i,n){return `<div class="arow${a.on?"":" off"}" data-ai="${i}">
+  <input type="checkbox" id="ap-on-${esc(a.id)}" data-af="on"${a.on?" checked":""} aria-label="Running">
+  <button class="sw" data-aact="color" style="background:${esc(a.color||"#4f7cac")}" aria-label="Change color"></button>
+  <input class="c-nm" type="text" id="ap-nm-${esc(a.id)}" data-af="name" value="${esc(a.name)}" aria-label="App name">
+  <input type="number" id="ap-th-${esc(a.id)}" data-af="threads" min="0" step="0.5" value="${esc(a.threads)}" aria-label="Thread cap">
+  <input type="number" id="ap-ram-${esc(a.id)}" data-af="ram" min="0" step="0.25" value="${esc(a.ram)}" aria-label="RAM GB">
+  <span class="use" title="From the last pasted docker stats">${typeof a.used==="number"?(a.used<1?Math.round(a.used*1024)+" MB":f2(a.used)+" GB")+(typeof a.cpu==="number"?"<br>"+a.cpu+"% CPU":""):"–"}</span>
+  <input type="text" id="ap-ip-${esc(a.id)}" data-af="ip" value="${esc(a.ip||"")}" placeholder="IP" aria-label="IP">
+  <input type="text" id="ap-port-${esc(a.id)}" data-af="port" value="${esc(a.port||"")}" placeholder="Port" aria-label="Port">
+  <input class="c-nt" type="text" id="ap-nt-${esc(a.id)}" data-af="notes" value="${esc(a.notes||"")}" placeholder="Notes" aria-label="Notes">
+  <div class="aacts c-acts"><button data-aact="up"${i===0?" disabled":""} aria-label="Move up">↑</button><button data-aact="down"${i===n-1?" disabled":""} aria-label="Move down">↓</button><button data-aact="del" aria-label="Delete">✕</button></div></div>`}
+function renderApps(){const A=apState(),H=A.host;const hf=(l,k,t)=>`<label class="f">${l}<input id="aph-${k}" data-ah="${k}" type="${t}" value="${esc(H[k]??"")}"${t==="number"?' min="0" step="0.5"':""}></label>`;
+  $("viewApps").innerHTML=`<div id="apLive">${liveHTML()}</div><div id="apStats">${apStats()}</div><div class="apps-grid"><div><div class="apmode" role="group" aria-label="Chart shows"><button data-apmode="use" aria-pressed="${apMode==="use"}">Actual use</button><button data-apmode="cap" aria-pressed="${apMode==="cap"}">Limits</button></div><div id="apRack">${apRack()}</div>${A.usedAt?`<p class="hint" style="margin-top:6px">Usage from ${esc(new Date(A.usedAt).toLocaleString())}</p>`:""}</div><div class="panel"><h2>${esc(H.name||"NAS")} apps</h2>
+  <div class="hostf" style="margin-top:8px">${hf("Name","name","text")}${hf("CPU","cpu","text")}${hf("Threads","threads","number")}${hf("RAM (GB)","ram","number")}${hf("System reserve (GB)","reserve","number")}</div>
+  <div class="arows" style="margin-top:12px"><div class="ahead"><span>On</span><span></span><span>App</span><span>Threads</span><span>Limit GB</span><span>Using</span><span>IP</span><span>Port</span><span>Notes</span><span></span></div>${A.apps.map((a,i)=>apRow(a,i,A.apps.length)).join("")||'<p class="hint">No apps yet. Add your first one below.</p>'}</div>
+  <div class="row" style="margin-top:10px"><button data-aact="add" style="flex:0 0 auto">Add app</button><span class="hint" id="apMsg" style="flex:1 1 200px">${DB?"Changes save automatically.":"Saved in this browser only."}</span></div>
+  ${LIVE&&LIVE.docker?"":`<div class="paste"><h2>Update from TrueNAS</h2><p class="hint" style="margin:4px 0 6px">Run this in the TrueNAS shell, then paste the whole output below. Running apps get their real RAM, CPU and limit; anything not listed is marked off.</p>
+  <code id="apCmd">sudo docker stats --no-stream --format '{{.Name}} {{.CPUPerc}} {{.MemUsage}}'</code> <button data-aact="copycmd" style="font-size:.78rem;padding:2px 8px">Copy</button>
+  <textarea id="apPaste" aria-label="Paste docker stats output" placeholder="ix-plex-plex-1 0.15% 149.6MiB / 6GiB"></textarea>
+  <div class="row" style="margin-top:6px"><button data-aact="import" class="primary" style="flex:0 0 auto">Update usage</button><span class="hint" id="apImp" style="flex:1 1 200px"></span></div></div>`}
+  <p class="foot">TrueNAS app limits are caps, not reservations, so thread caps can add up past your core count. RAM is the number to watch. Whatever apps and the system don't use, ZFS uses as read cache.</p></div></div>`}
+const toGB=(v,u)=>{v=parseFloat(v);u=u.toUpperCase();return u.startsWith("G")?v:u.startsWith("M")?v/1024:u.startsWith("K")?v/1048576:v/1073741824};
+const normS=x=>String(x||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+function apImport(txt){const A=apState(),seen={};let n=0,unk=[];
+  txt.split(/\n/).forEach(line=>{const m=line.trim().match(/^(\S+)\s+([\d.]+)%\s+([\d.]+)\s*([KMG]?i?B)\s*\/\s*([\d.]+)\s*([KMG]?i?B)/i);if(!m)return;
+    const cn=normS(m[1].replace(/^ix-/,"").replace(/-\d+$/,""));let best=null,bl=0;
+    A.apps.forEach(a=>[normS(a.id),normS(a.name)].forEach(k=>{if(k&&cn.includes(k)&&k.length>bl){best=a;bl=k.length}}));
+    if(!best){unk.push(m[1]);return}n++;
+    const e=seen[best.id]||(seen[best.id]={used:0,cpu:0,lim:0});e.used+=toGB(m[3],m[4]);e.cpu+=parseFloat(m[2]);e.lim+=toGB(m[5],m[6])});
+  if(!n){$("apImp").textContent="Couldn't read that. Paste the full output of the command above.";return}
+  A.apps.forEach(a=>{const e=seen[a.id];if(e){a.on=true;a.used=Math.round(e.used*1000)/1000;a.cpu=Math.round(e.cpu*100)/100;if(e.lim>0&&e.lim<nz(A.host.ram,32))a.ram=Math.round(e.lim*100)/100}else{a.on=false}});
+  A.usedAt=new Date().toISOString();renderApps();apSave();
+  $("apImp").textContent=`Updated ${Object.keys(seen).length} apps from ${n} containers.`+(unk.length?` Not matched: ${unk.join(", ")} (add them as apps first).`:"")}
+function apRefresh(){$("apRack").innerHTML=apRack();$("apStats").innerHTML=apStats();const l=$("apLive");if(l)l.innerHTML=liveHTML();setSync()}
+function apSave(){clearTimeout(apTimer);apTimer=setTimeout(()=>{const A=apState();try{localStorage.setItem("rb.apps",JSON.stringify(A))}catch(e){}if(DB)DB.doc("nas/apps").set(JSON.parse(JSON.stringify(A))).then(()=>{const m=$("apMsg");if(m)m.textContent="Saved."}).catch(()=>{const m=$("apMsg");if(m)m.textContent="Couldn't save. Try again in a moment."})},700)}
+$("viewApps").addEventListener("input",e=>{const el=e.target,A=apState();
+  if(el.dataset.ah){const k=el.dataset.ah;A.host[k]=el.type==="number"?nz(el.value,0):el.value;apRefresh();apSave();return}
+  const r=el.closest(".arow");if(!r||!el.dataset.af)return;const a=A.apps[+r.dataset.ai],k=el.dataset.af;
+  if(k==="on"){a.on=el.checked;r.classList.toggle("off",!a.on)}else a[k]=el.type==="number"?nz(el.value,0):el.value;apRefresh();apSave()});
+$("viewApps").addEventListener("click",e=>{const m=e.target.closest("[data-apmode]");if(m){apMode=m.dataset.apmode;try{localStorage.setItem("rb.apMode2",apMode)}catch(x){}renderApps();return}
+  const c=e.target.closest('[data-aact="copycmd"]');if(c){const t=$("apCmd").textContent;navigator.clipboard?.writeText(t).then(()=>{c.textContent="Copied"},()=>{});return}
+  const im=e.target.closest('[data-aact="import"]');if(im){apImport($("apPaste").value);return}
+  const b=e.target.closest("[data-aact]");if(!b||b.disabled)return;const A=apState(),r=b.closest(".arow"),i=r?+r.dataset.ai:-1,act=b.dataset.aact;
+  if(act==="add"){const used=A.apps.map(a=>a.color);A.apps.push({id:"app"+Date.now().toString(36),name:"New app",threads:1,ram:1,ip:"",port:"",notes:"",on:true,color:APAL.find(c=>!used.includes(c))||APAL[0]})}
+  else if(act==="up"&&i>0)A.apps.splice(i-1,0,A.apps.splice(i,1)[0]);
+  else if(act==="down"&&i<A.apps.length-1)A.apps.splice(i+1,0,A.apps.splice(i,1)[0]);
+  else if(act==="del"){if(!b.dataset.confirm){b.dataset.confirm="1";b.textContent="?";b.title="Click again to delete";setTimeout(()=>{if(b.isConnected){delete b.dataset.confirm;b.textContent="✕"}},2500);return}A.apps.splice(i,1)}
+  else if(act==="color"){const a=A.apps[i];a.color=APAL[(APAL.indexOf(a.color)+1)%APAL.length]}
+  renderApps();apSave()});
+/* ---------- views ---------- */
+let VIEW=location.hash==="#apps"?"apps":(()=>{try{return localStorage.getItem("rb.view")||"plan"}catch(e){return "plan"}})();
+function setView(v){VIEW=v;try{localStorage.setItem("rb.view",v)}catch(e){}$("viewPlan").hidden=v!=="plan";$("planStats").hidden=v!=="plan";$("viewApps").hidden=v!=="apps";
+  $("v-plan").setAttribute("aria-selected",v==="plan");$("v-apps").setAttribute("aria-selected",v==="apps");if(v==="apps")renderApps()}
+document.addEventListener("click",e=>{const b=e.target.closest("[data-view]");if(b)setView(b.dataset.view)});
+function setSync(){$("sync").textContent=SRV?(LIVE&&LIVE.docker?"Running on your NAS · live stats on":"Running on your NAS"):DB?"Synced: orders, prices and apps save to this page":dbState==="off"?"Saving in this browser only":"Connecting…"}
+/* ---------- storage: TrueNAS server or claude.ai page db ---------- */
+let SRV=false,LIVE=null;
+function makeServerDB(){const subs=[];let cache={},ver=-1;
+  const snap=p=>({id:p.split("/").pop(),exists:Object.prototype.hasOwnProperty.call(cache,p),data:()=>cache[p]});
+  const fire=()=>subs.forEach(f=>{try{f()}catch(e){}});
+  async function pull(){try{const r=await fetch("api/state",{cache:"no-store"});if(!r.ok)return;const j=await r.json();if(j.ver!==ver){ver=j.ver;cache=j.docs||{};fire()}}catch(e){}}
+  const db={ready:pull(),
+    doc(p){return{async set(d){cache[p]=JSON.parse(JSON.stringify(d));const r=await fetch("api/doc/"+p,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});if(!r.ok)throw{code:"unavailable"};const j=await r.json();ver=j.ver;fire()},
+      async get(){return snap(p)},
+      onSnapshot(cb){const f=()=>cb(snap(p));subs.push(f);f();return()=>{}}}},
+    collection(n){return{onSnapshot(cb){const f=()=>{const docs=Object.keys(cache).filter(k=>k.startsWith(n+"/")&&k.split("/").length===2).map(snap);cb({docs,size:docs.length,empty:!docs.length})};subs.push(f);f();return()=>{}}}}};
+  setInterval(pull,5000);return db}
+function wireDB(){
+  DB.collection("orders").onSnapshot(q=>{for(const k in ORD)delete ORD[k];q.docs.forEach(d=>{ORD[d.id]=JSON.parse(JSON.stringify(d.data()||{}))});render()},()=>{});
+  DB.collection("prices").onSnapshot(q=>{for(const k in PRICE)delete PRICE[k];q.docs.forEach(d=>{PRICE[d.id]=d.data()||{}});renderCatalog();render()},()=>{});
+  DB.doc("settings/budget").onSnapshot(d=>{const v=d.exists?(d.data()||{}).perCheck:null;if(typeof v==="number"&&perCheck!==v){perCheck=v;render()}},()=>{});
+  DB.doc("plan/state").onSnapshot(d=>{if(planLoaded)return;planLoaded=true;const v=d.exists?d.data():null;
+    if(v&&v.key===KEY&&v.w&&v.w.builds){W=JSON.parse(JSON.stringify(v.w));S=W.builds[W.active]||W.builds.upgrade;render()}else save()},()=>{planLoaded=true});
+  DB.doc("nas/apps").onSnapshot(d=>{if(!d.exists)return;const v=JSON.parse(JSON.stringify(d.data()));const ae=document.activeElement;
+    AP=v;if(LIVE)applyLiveApps();if(VIEW==="apps"){if(ae&&$("viewApps").contains(ae)&&ae.tagName==="INPUT")apRefresh();else renderApps()}},()=>{});
+}
+/* live stats from the TrueNAS server */
+function applyLiveApps(){if(!LIVE||!LIVE.containers)return;const A=apState(),seen={};
+  LIVE.containers.forEach(c=>{const cn=normS(String(c.project||c.name).replace(/^ix-/,""));let best=null,bl=0;
+    A.apps.forEach(a=>[normS(a.id),normS(a.name)].forEach(k=>{if(k&&cn.includes(k)&&k.length>bl){best=a;bl=k.length}}));
+    if(!best)return;const e=seen[best.id]||(seen[best.id]={used:0,cpu:0,lim:0});e.used+=c.mem/1073741824;e.cpu+=c.cpu;e.lim+=c.limit/1073741824});
+  A.apps.forEach(a=>{const e=seen[a.id];if(e){a.on=true;a.used=Math.round(e.used*1000)/1000;a.cpu=Math.round(e.cpu*100)/100;if(e.lim>0&&e.lim<nz(A.host.ram,32))a.ram=Math.round(e.lim*100)/100}else a.on=false});
+  A.usedAt=new Date(LIVE.ts*1000).toISOString()}
+let liveSaveAt=0;
+async function pollLive(){try{const r=await fetch("api/live",{cache:"no-store"});if(!r.ok)return;LIVE=await r.json();applyLiveApps();
+  if(Date.now()-liveSaveAt>300000){liveSaveAt=Date.now();apSave()}
+  if(VIEW==="apps"){const ae=document.activeElement;if(ae&&$("viewApps").contains(ae)&&ae.tagName==="INPUT")apRefresh();else renderApps()}}catch(e){}}
+(async()=>{
+  try{const r=await fetch("api/ping",{cache:"no-store"});if(r.ok){const j=await r.json();SRV=j&&j.app==="rack-builder"}}catch(e){}
+  if(SRV){DB=makeServerDB();await DB.ready;dbState="on";setSync();wireDB();pollLive();setInterval(pollLive,10000);return}
+  try{DB=window.claude&&window.claude.use?await window.claude.use("db"):null}catch(e){DB=null}
+  dbState=DB?"on":"off";setSync();if(DB)wireDB();
+})();
+setSync();setView(VIEW);
+renderCatalog();render();
+</script>
+
+</body></html>
