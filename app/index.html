@@ -100,6 +100,8 @@ tfoot td{font-weight:600;border-bottom:0}
 .toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between}
 .foot{font-size:.8rem;color:var(--muted);margin-top:10px;max-width:70ch}
 textarea{position:absolute;left:-9999px}
+.kiosk header,.kiosk .views,.kiosk .apps-grid,.kiosk #apStats,.kiosk .apmode{display:none!important}
+.kiosk .wrap{max-width:none}
 .views{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
 .views button{font-family:var(--display);text-transform:uppercase;letter-spacing:.06em;font-weight:600;padding:6px 14px}
 .views button[aria-selected="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
@@ -201,7 +203,7 @@ td select{width:auto;padding:2px 4px}
       <div class="stat total"><b id="sT">$0</b><span>Total cost</span></div>
     </div>
   </header>
-  <nav class="views" role="tablist" aria-label="View"><button id="v-plan" data-view="plan" role="tab">Build plan</button><button id="v-apps" data-view="apps" role="tab">NAS apps</button><span class="sync" id="sync"></span></nav>
+  <nav class="views" role="tablist" aria-label="View"><button id="v-plan" data-view="plan" role="tab">Build plan</button><button id="v-apps" data-view="apps" role="tab">NAS apps</button><a class="lk" id="kioskLink" href="#live" target="_blank" rel="noopener" hidden>Dashboard view</a><span class="sync" id="sync"></span></nav>
 
   <div class="grid" id="viewPlan">
     <aside class="stack">
@@ -686,8 +688,8 @@ function spark(vals,color){if(!vals.length)return"";const W=120,H=26,mx=Math.max
   const pts=vals.map((v,i)=>`${n>1?(i/(n-1)*W).toFixed(1):W},${(H-1-(v/mx)*(H-3)).toFixed(1)}`).join(" ");
   return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><polygon points="0,${H} ${pts} ${W},${H}" fill="${color}" opacity=".18"/><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`}
 function cardsHTML(){if(!LIVE||!LIVE.apps||!LIVE.apps.length)return"";const A=apState();
-  const match=a=>{const cn=normS(String(a.project).replace(/^ix-/,""));let best=null,bl=0;A.apps.forEach(x=>[normS(x.id),normS(x.name)].forEach(k=>{if(k&&cn.includes(k)&&k.length>bl){best=x;bl=k.length}}));return best};
-  const rows=LIVE.apps.map(a=>({a,app:match(a)})).filter(r=>!/rack-?builder/.test(r.a.project));
+  const mp=matchApps(LIVE.apps.map(a=>a.project));
+  const rows=LIVE.apps.map(a=>({a,app:mp[a.project]})).filter(r=>!/rack-?builder/.test(r.a.project));
   rows.sort((x,y)=>(x.app?A.apps.indexOf(x.app):999)-(y.app?A.apps.indexOf(y.app):999));
   return `<div class="lcards">${rows.map(({a,app})=>{const h=a.hist||[],col=(app&&app.color)||"#4f7cac",hl=String(a.health||"");
     const st=/unhealthy/.test(hl)?["bad","Unhealthy"]:/starting/.test(hl)?["warn","Starting"]:["ok","Running"];
@@ -763,11 +765,13 @@ $("importData").addEventListener("click",async()=>{let d;try{d=JSON.parse($("imp
     if(DB&&d.plan)await DB.doc("plan/state").set({key:KEY,w:JSON.parse(JSON.stringify(W))});
     render();if(VIEW==="apps")renderApps();$("xferMsg").textContent="Imported.";$("importBox").value=""}catch(e){$("xferMsg").textContent="Some of it didn't save. Try importing again."}});
 /* ---------- views ---------- */
-let VIEW=location.hash==="#apps"?"apps":(()=>{try{return localStorage.getItem("rb.view")||"plan"}catch(e){return "plan"}})();
-function setView(v){VIEW=v;try{localStorage.setItem("rb.view",v)}catch(e){}$("viewPlan").hidden=v!=="plan";$("planStats").hidden=v!=="plan";$("viewApps").hidden=v!=="apps";
+const KIOSK=location.hash==="#live";if(KIOSK)document.body.classList.add("kiosk");
+let VIEW=KIOSK||location.hash==="#apps"?"apps":(()=>{try{return localStorage.getItem("rb.view")||"plan"}catch(e){return "plan"}})();
+function setView(v){VIEW=v;if(!KIOSK)try{localStorage.setItem("rb.view",v)}catch(e){}$("viewPlan").hidden=v!=="plan";$("planStats").hidden=v!=="plan";$("viewApps").hidden=v!=="apps";
   $("v-plan").setAttribute("aria-selected",v==="plan");$("v-apps").setAttribute("aria-selected",v==="apps");if(v==="apps")renderApps()}
 document.addEventListener("click",e=>{const b=e.target.closest("[data-view]");if(b)setView(b.dataset.view)});
-function setSync(){$("sync").textContent=SRV?(LIVE&&LIVE.docker?"Running on your NAS · live stats on":"Running on your NAS"):DB?"Synced: orders, prices and apps save to this page":dbState==="off"?"Saving in this browser only":"Connecting…"}
+function setSync(){const kl=$("kioskLink");if(kl)kl.hidden=!(LIVE&&LIVE.apps&&LIVE.apps.length);
+  $("sync").textContent=SRV?(LIVE&&LIVE.docker?"Running on your NAS · live stats on":"Running on your NAS"):DB?"Synced: orders, prices and apps save to this page":dbState==="off"?"Saving in this browser only":"Connecting…"}
 /* ---------- storage: TrueNAS server or claude.ai page db ---------- */
 let SRV=false,LIVE=null;
 function makeServerDB(){const subs=[];let cache={},ver=-1;
@@ -790,13 +794,22 @@ function wireDB(){
     AP=v;if(LIVE)applyLiveApps();if(VIEW==="apps"){if(ae&&$("viewApps").contains(ae)&&ae.tagName==="INPUT")apRefresh();else renderApps()}},()=>{});
 }
 /* live stats from the TrueNAS server */
+function projKey(p){return normS(String(p||"").replace(/^ix-/,"").replace(/-\d+$/,""))}
+function matchApps(projs){const A=apState(),out={},claimed=new Set();
+  projs.forEach(p=>{const k=projKey(p);const a=A.apps.find(x=>x.proj===k&&!claimed.has(x))||A.apps.find(x=>!x.proj&&!claimed.has(x)&&(normS(x.id)===k||normS(x.name)===k));if(a){out[p]=a;claimed.add(a)}});
+  projs.forEach(p=>{if(out[p])return;const k=projKey(p);let best=null,bl=0;
+    A.apps.forEach(x=>{if(claimed.has(x)||x.proj)return;[normS(x.id),normS(x.name)].forEach(q=>{if(q&&k.includes(q)&&q.length>bl){best=x;bl=q.length}})});
+    if(best){out[p]=best;claimed.add(best)}});
+  return out}
 function applyLiveApps(){if(!LIVE||!LIVE.containers)return;const A=apState(),seen={};
-  LIVE.containers.forEach(c=>{const cn=normS(String(c.project||c.name).replace(/^ix-/,""));let best=null,bl=0;
-    A.apps.forEach(a=>[normS(a.id),normS(a.name)].forEach(k=>{if(k&&cn.includes(k)&&k.length>bl){best=a;bl=k.length}}));
-    if(!best){const nm=String(c.project||c.name).replace(/^ix-/,"").replace(/-\d+$/,"");if(!nm||nm==="rack-builder")return;const used=A.apps.map(a=>a.color);
-      best={id:normS(nm),name:nm.replace(/[-_]+/g," ").replace(/\b\w/g,m=>m.toUpperCase()),threads:0,ram:0,ip:"",port:"",notes:"Added from live stats",on:true,color:APAL.find(x=>!used.includes(x))||APAL[A.apps.length%APAL.length]};A.apps.push(best);addedLive=true}
-    const e=seen[best.id]||(seen[best.id]={used:0,cpu:0,lim:0,cpus:0});e.used+=c.mem/1073741824;e.cpu+=c.cpu;e.lim+=c.limit/1073741824;e.cpus+=c.cpus||0;
-    if(c.ports&&!best.port)best.port=c.ports.join(", ");if(c.ip&&!best.ip)best.ip=c.ip});
+  const projs=[...new Set(LIVE.containers.map(c=>c.project||c.name))].filter(p=>projKey(p)!=="rackbuilder");
+  const map=matchApps(projs);
+  projs.forEach(p=>{if(map[p])return;const nm=String(p).replace(/^ix-/,"").replace(/-\d+$/,"");const used=A.apps.map(a=>a.color);
+    const app={id:projKey(p),proj:projKey(p),name:nm.replace(/[-_]+/g," ").replace(/\b\w/g,m=>m.toUpperCase()),threads:0,ram:0,ip:"",port:"",notes:"Added from live stats",on:true,color:APAL.find(x=>!used.includes(x))||APAL[A.apps.length%APAL.length]};
+    A.apps.push(app);map[p]=app;addedLive=true});
+  LIVE.containers.forEach(c=>{const app=map[c.project||c.name];if(!app)return;if(!app.proj){app.proj=projKey(c.project||c.name);addedLive=true}
+    const e=seen[app.id]||(seen[app.id]={used:0,cpu:0,lim:0,cpus:0});e.used+=c.mem/1073741824;e.cpu+=c.cpu;e.lim+=c.limit/1073741824;e.cpus+=c.cpus||0;
+    if(c.ports&&c.ports.length&&!app.port)app.port=c.ports.join(", ");if(c.ip&&!app.ip)app.ip=c.ip});
   A.apps.forEach(a=>{const e=seen[a.id];if(e){a.on=true;a.used=Math.round(e.used*1000)/1000;a.cpu=Math.round(e.cpu*100)/100;if(e.lim>0&&e.lim<nz(A.host.ram,32))a.ram=Math.round(e.lim*100)/100;if(e.cpus>0)a.threads=Math.round(e.cpus*100)/100}else a.on=false});
   if(A.host&&LIVE.host&&LIVE.host.memTotal&&!A.host.ramSet){A.host.ram=Math.round(LIVE.host.memTotal/1073741824)}
   A.usedAt=new Date(LIVE.ts*1000).toISOString()}
