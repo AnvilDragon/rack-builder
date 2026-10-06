@@ -143,6 +143,17 @@ textarea{position:absolute;left:-9999px}
 .aacts{display:flex;gap:2px;justify-content:flex-end}.aacts button{padding:0 6px}
 .use{font-family:var(--mono);font-size:.74rem;color:var(--muted);line-height:1.2}
 .apmode{display:flex;gap:6px;margin-bottom:8px}.apmode button{font-size:.78rem;padding:3px 10px}.apmode button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.lcards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-bottom:16px}
+.lcard{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.lh{display:flex;align-items:center;gap:8px;min-width:0}.lh b{font-family:var(--display);text-transform:uppercase;letter-spacing:.05em;font-size:1rem;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.lh .sq{width:10px;height:10px;border-radius:3px;flex:none}
+.ldot{font-size:.72rem;font-weight:600;border-radius:999px;padding:1px 8px;border:1px solid currentColor;flex:none}.ldot.ok{color:var(--good)}.ldot.warn{color:var(--accent)}.ldot.bad{color:var(--bad)}
+.lg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.lt{background:var(--bg);border-radius:5px;padding:6px 8px;display:flex;flex-direction:column;gap:1px;min-width:0}
+.lt span{font-size:.66rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.lt b{font-family:var(--mono);font-weight:500;font-size:.9rem;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lt small{font-family:var(--mono);font-size:.68rem;color:var(--muted)}
+.lt svg{width:100%;height:26px;display:block;margin-top:2px}
 .xfer{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}.xfer>summary{font-size:.85rem}
 .xfer textarea{position:static;width:100%;min-height:70px;font-family:var(--mono);font-size:.75rem;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:5px;padding:6px;margin-top:8px}
 .paste{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
@@ -669,8 +680,25 @@ function apRack(){const A=apState(),t=apTotals(),R=Math.max(1,nz(A.host.ram,32))
   const T=Math.max(1,nz(A.host.threads,16)),sc=Math.max(T,t.thr);
   return `<div class="ramrack"><div class="rt"><span>RAM</span><span>${f2(R)} GB</span></div><div class="rambay" style="height:${Math.max(R,R-t.free)*px}px">${bl}</div>
   <div class="rt" style="margin-top:12px"><span>Thread caps</span><span>${f2(t.thr)} / ${f2(T)}</span></div><div class="tbar">${t.on.map(a=>nz(a.threads,0)>0?`<i style="width:${nz(a.threads,0)/sc*100}%;background:${esc(a.color||"#4f7cac")}" title="${esc(a.name)}"></i>`:"").join("")}</div></div>`}
+const fB=n=>{n=+n||0;const u=["B","KiB","MiB","GiB"];let i=0;while(n>=1024&&i<3){n/=1024;i++}return (i?n.toFixed(n<10?1:0):Math.round(n))+" "+u[i]};
+const fR=n=>{n=(+n||0)*8;const u=["b/s","kb/s","Mb/s","Gb/s"];let i=0;while(n>=1000&&i<3){n/=1000;i++}return (i?n.toFixed(n<10?1:0):Math.round(n))+" "+u[i]};
+function spark(vals,color){if(!vals.length)return"";const W=120,H=26,mx=Math.max(...vals,1e-9),n=vals.length;
+  const pts=vals.map((v,i)=>`${n>1?(i/(n-1)*W).toFixed(1):W},${(H-1-(v/mx)*(H-3)).toFixed(1)}`).join(" ");
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><polygon points="0,${H} ${pts} ${W},${H}" fill="${color}" opacity=".18"/><polyline points="${pts}" fill="none" stroke="${color}" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`}
+function cardsHTML(){if(!LIVE||!LIVE.apps||!LIVE.apps.length)return"";const A=apState();
+  const match=a=>{const cn=normS(String(a.project).replace(/^ix-/,""));let best=null,bl=0;A.apps.forEach(x=>[normS(x.id),normS(x.name)].forEach(k=>{if(k&&cn.includes(k)&&k.length>bl){best=x;bl=k.length}}));return best};
+  const rows=LIVE.apps.map(a=>({a,app:match(a)})).filter(r=>!/rack-?builder/.test(r.a.project));
+  rows.sort((x,y)=>(x.app?A.apps.indexOf(x.app):999)-(y.app?A.apps.indexOf(y.app):999));
+  return `<div class="lcards">${rows.map(({a,app})=>{const h=a.hist||[],col=(app&&app.color)||"#4f7cac",hl=String(a.health||"");
+    const st=/unhealthy/.test(hl)?["bad","Unhealthy"]:/starting/.test(hl)?["warn","Starting"]:["ok","Running"];
+    const name=app?app.name:String(a.project).replace(/^ix-/,"");
+    return `<div class="lcard"><div class="lh"><span class="sq" style="background:${esc(col)}"></span><b title="${esc(name)}">${esc(name)}</b><span class="ldot ${st[0]}">${st[1]}</span></div><div class="lg">
+      <div class="lt"><span>CPU</span><b>${(+a.cpu||0).toFixed(1)}%</b><small>${a.cpus?"cap "+f2(a.cpus)+" threads":"no cap"}</small>${spark(h.map(x=>x[1]),col)}</div>
+      <div class="lt"><span>Memory</span><b>${fB(a.mem)}</b><small>${a.limit?"of "+fB(a.limit):"no limit"}</small>${spark(h.map(x=>x[2]),col)}</div>
+      <div class="lt"><span>Network</span><b>↓ ${fR(a.rx)}</b><small>↑ ${fR(a.tx)}</small>${spark(h.map(x=>x[3]+x[4]),col)}</div>
+      <div class="lt"><span>Disk</span><b>R ${fB(a.rd)}/s</b><small>W ${fB(a.wr)}/s</small>${spark(h.map(x=>x[5]+x[6]),col)}</div></div></div>`}).join("")}</div>`}
 function liveHTML(){if(!LIVE||!LIVE.host)return"";const h=LIVE.host,g=v=>typeof v==="number"?(v/1073741824).toFixed(1)+" GB":"–";
-  return `<div class="stats" style="margin-bottom:10px"><div class="stat"><b>${typeof h.cpu==="number"?h.cpu.toFixed(1)+"%":"–"}</b><span>Live CPU</span></div><div class="stat"><b>${g(h.memUsed)}</b><span>Services</span></div><div class="stat"><b style="color:var(--good)">${g(h.arc)}</b><span>ZFS cache</span></div><div class="stat"><b>${typeof h.memTotal==="number"&&typeof h.memUsed==="number"?g(Math.max(0,h.memTotal-h.memUsed-(h.arc||0))):"–"}</b><span>Free of ${g(h.memTotal)}</span></div><div class="stat"><b>${new Date(LIVE.ts*1000).toLocaleTimeString()}</b><span>${LIVE.docker?"Updated every 10 s":"Docker stats off"}</span></div></div>`}
+  return `<div class="stats" style="margin-bottom:10px"><div class="stat"><b>${typeof h.cpu==="number"?h.cpu.toFixed(1)+"%":"–"}</b><span>Live CPU</span></div><div class="stat"><b>${g(h.memUsed)}</b><span>Services</span></div><div class="stat"><b style="color:var(--good)">${g(h.arc)}</b><span>ZFS cache</span></div><div class="stat"><b>${typeof h.memTotal==="number"&&typeof h.memUsed==="number"?g(Math.max(0,h.memTotal-h.memUsed-(h.arc||0))):"–"}</b><span>Free of ${g(h.memTotal)}</span></div><div class="stat"><b>${new Date(LIVE.ts*1000).toLocaleTimeString()}</b><span>${LIVE.docker?"Updated every "+(LIVE.interval||5)+" s":"Docker stats off"}</span></div></div>`}
 function apStats(){const A=apState(),t=apTotals();const lvl=t.free<0?"bad":t.free<4?"accent":"good";
   return `<div class="stats" style="margin-bottom:14px"><div class="stat"><b>${t.on.length} / ${A.apps.length}</b><span>Apps running</span></div><div class="stat"><b>${f2(t.ram)} GB</b><span>${apMode==="use"?"RAM apps use (limits "+f2(t.cap)+" GB)":"RAM limits"}</span></div><div class="stat"><b style="color:var(--${lvl})">${f2(Math.max(0,t.free))} GB</b><span>${t.free<0?"Over by "+f2(-t.free)+" GB":"Left for ZFS cache"}</span></div><div class="stat"><b>${f2(t.thr)} / ${f2(nz(A.host.threads,0))}</b><span>Thread caps</span></div></div>`}
 function apRow(a,i,n){return `<div class="arow${a.on?"":" off"}" data-ai="${i}">
@@ -685,7 +713,7 @@ function apRow(a,i,n){return `<div class="arow${a.on?"":" off"}" data-ai="${i}">
   <input class="c-nt" type="text" id="ap-nt-${esc(a.id)}" data-af="notes" value="${esc(a.notes||"")}" placeholder="Notes" aria-label="Notes">
   <div class="aacts c-acts"><button data-aact="up"${i===0?" disabled":""} aria-label="Move up">↑</button><button data-aact="down"${i===n-1?" disabled":""} aria-label="Move down">↓</button><button data-aact="del" aria-label="Delete">✕</button></div></div>`}
 function renderApps(){const A=apState(),H=A.host;const hf=(l,k,t)=>`<label class="f">${l}<input id="aph-${k}" data-ah="${k}" type="${t}" value="${esc(H[k]??"")}"${t==="number"?' min="0" step="0.5"':""}></label>`;
-  $("viewApps").innerHTML=`<div id="apLive">${liveHTML()}</div><div id="apStats">${apStats()}</div><div class="apps-grid"><div><div class="apmode" role="group" aria-label="Chart shows"><button data-apmode="use" aria-pressed="${apMode==="use"}">Actual use</button><button data-apmode="cap" aria-pressed="${apMode==="cap"}">Limits</button></div><div id="apRack">${apRack()}</div>${A.usedAt?`<p class="hint" style="margin-top:6px">Usage from ${esc(new Date(A.usedAt).toLocaleString())}</p>`:""}</div><div class="panel"><h2>${esc(H.name||"NAS")} apps</h2>
+  $("viewApps").innerHTML=`<div id="apLive">${liveHTML()}</div><div id="apCards">${cardsHTML()}</div><div id="apStats">${apStats()}</div><div class="apps-grid"><div><div class="apmode" role="group" aria-label="Chart shows"><button data-apmode="use" aria-pressed="${apMode==="use"}">Actual use</button><button data-apmode="cap" aria-pressed="${apMode==="cap"}">Limits</button></div><div id="apRack">${apRack()}</div>${A.usedAt?`<p class="hint" style="margin-top:6px">Usage from ${esc(new Date(A.usedAt).toLocaleString())}</p>`:""}</div><div class="panel"><h2>${esc(H.name||"NAS")} apps</h2>
   <div class="hostf" style="margin-top:8px">${hf("Name","name","text")}${hf("CPU","cpu","text")}${hf("Threads","threads","number")}${hf("RAM (GB)","ram","number")}${hf("System reserve (GB)","reserve","number")}</div>
   <div class="arows" style="margin-top:12px"><div class="ahead"><span>On</span><span></span><span>App</span><span>Threads</span><span>Limit GB</span><span>Using</span><span>IP</span><span>Port</span><span>Notes</span><span></span></div>${A.apps.map((a,i)=>apRow(a,i,A.apps.length)).join("")||'<p class="hint">No apps yet. Add your first one below.</p>'}</div>
   <div class="row" style="margin-top:10px"><button data-aact="add" style="flex:0 0 auto">Add app</button><span class="hint" id="apMsg" style="flex:1 1 200px">${DB?"Changes save automatically.":"Saved in this browser only."}</span></div>
@@ -706,7 +734,7 @@ function apImport(txt){const A=apState(),seen={};let n=0,unk=[];
   A.apps.forEach(a=>{const e=seen[a.id];if(e){a.on=true;a.used=Math.round(e.used*1000)/1000;a.cpu=Math.round(e.cpu*100)/100;if(e.lim>0&&e.lim<nz(A.host.ram,32))a.ram=Math.round(e.lim*100)/100}else{a.on=false}});
   A.usedAt=new Date().toISOString();renderApps();apSave();
   $("apImp").textContent=`Updated ${Object.keys(seen).length} apps from ${n} containers.`+(unk.length?` Not matched: ${unk.join(", ")} (add them as apps first).`:"")}
-function apRefresh(){$("apRack").innerHTML=apRack();$("apStats").innerHTML=apStats();const l=$("apLive");if(l)l.innerHTML=liveHTML();setSync()}
+function apRefresh(){$("apRack").innerHTML=apRack();$("apStats").innerHTML=apStats();const l=$("apLive");if(l)l.innerHTML=liveHTML();const c=$("apCards");if(c)c.innerHTML=cardsHTML();setSync()}
 function apSave(){clearTimeout(apTimer);apTimer=setTimeout(()=>{const A=apState();try{localStorage.setItem("rb.apps",JSON.stringify(A))}catch(e){}if(DB)DB.doc("nas/apps").set(JSON.parse(JSON.stringify(A))).then(()=>{const m=$("apMsg");if(m)m.textContent="Saved."}).catch(()=>{const m=$("apMsg");if(m)m.textContent="Couldn't save. Try again in a moment."})},700)}
 $("viewApps").addEventListener("input",e=>{const el=e.target,A=apState();
   if(el.dataset.ah){const k=el.dataset.ah;A.host[k]=el.type==="number"?nz(el.value,0):el.value;apRefresh();apSave();return}
@@ -774,11 +802,12 @@ function applyLiveApps(){if(!LIVE||!LIVE.containers)return;const A=apState(),see
   A.usedAt=new Date(LIVE.ts*1000).toISOString()}
 let liveSaveAt=0,addedLive=false;
 async function pollLive(){try{const r=await fetch("api/live",{cache:"no-store"});if(!r.ok)return;LIVE=await r.json();applyLiveApps();
-  if(addedLive||Date.now()-liveSaveAt>300000){addedLive=false;liveSaveAt=Date.now();apSave()}
-  if(VIEW==="apps"){const ae=document.activeElement;if(ae&&$("viewApps").contains(ae)&&ae.tagName==="INPUT")apRefresh();else renderApps()}}catch(e){}}
+  const wasAdded=addedLive;if(addedLive||Date.now()-liveSaveAt>300000){liveSaveAt=Date.now();apSave()}addedLive=wasAdded;
+  if(VIEW==="apps"){if(addedLive||!$("apCards"))renderApps();else apRefresh()}addedLive=false}catch(e){}}
+function liveLoop(){pollLive().finally(()=>setTimeout(liveLoop,VIEW==="apps"?((LIVE&&LIVE.interval)||5)*1000:30000))}
 (async()=>{
   try{const r=await fetch("api/ping",{cache:"no-store"});if(r.ok){const j=await r.json();SRV=j&&j.app==="rack-builder"}}catch(e){}
-  if(SRV){DB=makeServerDB();await DB.ready;dbState="on";setSync();wireDB();pollLive();setInterval(pollLive,10000);return}
+  if(SRV){DB=makeServerDB();await DB.ready;dbState="on";setSync();wireDB();liveLoop();return}
   try{DB=window.claude&&window.claude.use?await window.claude.use("db"):null}catch(e){DB=null}
   dbState=DB?"on":"off";setSync();if(DB)wireDB();
 })();

@@ -1,6 +1,7 @@
 # Rack Builder server for TrueNAS: serves the page, stores its data in /app/state.json,
 # and (optionally) reports live CPU, RAM, ZFS cache and per-app usage.
 import json, os, re, threading, time, http.client
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
@@ -8,7 +9,8 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 STATE = os.path.join(os.environ.get("DATA_DIR", ROOT), "state.json")
 PORT = int(os.environ.get("PORT", "8080"))
 DOCKER = os.environ.get("DOCKER_HOST_PROXY", "")          # e.g. socket-proxy:2375
-INTERVAL = max(5, int(os.environ.get("LIVE_INTERVAL", "10")))
+INTERVAL = max(3, int(os.environ.get("LIVE_INTERVAL", "5")))
+HIST_LEN = 120   # samples kept per app (10 minutes at 5 s)
 PATH_RE = re.compile(r"^[A-Za-z0-9_\-.]{1,64}/[A-Za-z0-9_\-.:@+~]{1,200}$")
 
 lock = threading.Lock()
@@ -29,6 +31,8 @@ def save_state():
 LIVE = {"ts": 0, "docker": False, "host": {}, "containers": []}
 _prev_cpu = None
 _prev_ctr = {}
+_prev_io = {}
+HIST = {}
 
 def host_stats():
     global _prev_cpu
@@ -106,6 +110,21 @@ def one_container(ct):
     if prev and sys_t > prev[1]:
         cpu = round(100.0 * (cpu_t - prev[0]) / (sys_t - prev[1]) * ncpu, 2)
     _prev_ctr[cid] = (cpu_t, sys_t)
+    nets = st.get("networks") or {}
+    rx = sum((n or {}).get("rx_bytes", 0) for n in nets.values())
+    tx = sum((n or {}).get("tx_bytes", 0) for n in nets.values())
+    rd = wr = 0
+    for e in ((st.get("blkio_stats") or {}).get("io_service_bytes_recursive") or []):
+        op = str(e.get("op", "")).lower()
+        if op == "read": rd += e.get("value", 0)
+        elif op == "write": wr += e.get("value", 0)
+    now = time.time()
+    rates = [0.0, 0.0, 0.0, 0.0]
+    pv = _prev_io.get(cid)
+    if pv and now > pv[0]:
+        dt = now - pv[0]
+        rates = [max(0.0, (a - b) / dt) for a, b in zip((rx, tx, rd, wr), pv[1:])]
+    _prev_io[cid] = (now, rx, tx, rd, wr)
     labels = ct.get("Labels", {}) or {}
     ports, ip = [], ""
     for pt in ct.get("Ports") or []:
@@ -116,14 +135,15 @@ def one_container(ct):
     return {"id": cid[:12], "name": (ct.get("Names") or ["?"])[0].lstrip("/"),
             "project": labels.get("com.docker.compose.project", ""),
             "cpu": max(cpu, 0.0), "mem": max(mem, 0), "limit": ms.get("limit", 0),
-            "cpus": _inspect.get(cid, 0), "ports": sorted(set(ports), key=lambda x: int(x)), "ip": ip}
+            "cpus": _inspect.get(cid, 0), "rx": rates[0], "tx": rates[1], "rd": rates[2], "wr": rates[3],
+            "state": ct.get("State", ""), "health": ct.get("Status", ""), "ports": sorted(set(ports), key=lambda x: int(x)), "ip": ip}
 
 def container_stats():
     cts = docker_get("/containers/json")
     live = {c["Id"] for c in cts}
     for k in list(_inspect):
         if k not in live:
-            _inspect.pop(k, None); _prev_ctr.pop(k, None)
+            _inspect.pop(k, None); _prev_ctr.pop(k, None); _prev_io.pop(k, None)
     return [r for r in POOL.map(one_container, cts) if r]
 
 def collector():
@@ -135,8 +155,26 @@ def collector():
                 ctrs, ok = container_stats(), True
             except Exception:
                 ok = False
+        apps = {}
+        for c in ctrs:
+            key = c["project"] or c["name"]
+            a = apps.setdefault(key, {"project": key, "cpu": 0.0, "mem": 0, "limit": 0, "cpus": 0.0,
+                                      "rx": 0.0, "tx": 0.0, "rd": 0.0, "wr": 0.0, "n": 0, "health": ""})
+            for f in ("cpu", "mem", "limit", "cpus", "rx", "tx", "rd", "wr"):
+                a[f] += c.get(f) or 0
+            a["n"] += 1
+            if "unhealthy" in c.get("health", "") or not a["health"]:
+                a["health"] = c.get("health", "")
+        ts = int(time.time())
+        for key, a in apps.items():
+            hq = HIST.setdefault(key, deque(maxlen=HIST_LEN))
+            hq.append([ts, round(a["cpu"], 2), a["mem"], round(a["rx"]), round(a["tx"]), round(a["rd"]), round(a["wr"])])
+            a["hist"] = list(hq)
+        for key in list(HIST):
+            if key not in apps:
+                HIST.pop(key, None)
         with lock:
-            LIVE.update({"ts": int(time.time()), "docker": ok, "host": h, "containers": ctrs})
+            LIVE.update({"ts": ts, "docker": ok, "host": h, "containers": ctrs, "apps": list(apps.values()), "interval": INTERVAL})
         time.sleep(INTERVAL)
 
 # ---------- http ----------
