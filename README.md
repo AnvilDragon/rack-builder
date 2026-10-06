@@ -16,3 +16,9 @@ Every push to `main` builds a new image. To update, pull the image again in Apps
 ## Live stats
 
 The `socket-proxy` service gives read-only access to container stats, so the NAS apps view shows live CPU, RAM, ZFS cache and per-app usage every 10 seconds. Remove that service and the `DOCKER_HOST_PROXY` line to turn it off.
+
+## Weekly prices
+
+A scheduled Claude task checks part prices every Sunday and saves them to `prices.json` in this repo. The NAS app reads that file every 6 hours.
+
+To turn it on, make a fine-grained GitHub token: Settings > Developer settings > Personal access tokens > Fine-grained tokens > Generate. Repository access: only `rack-builder`. Permissions: Contents, Read-only. Put it in `PRICES_TOKEN` in the app's YAML.

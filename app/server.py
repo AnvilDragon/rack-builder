@@ -1,6 +1,6 @@
 # Rack Builder server for TrueNAS: serves the page, stores its data in /app/state.json,
 # and (optionally) reports live CPU, RAM, ZFS cache and per-app usage.
-import json, os, re, threading, time, http.client
+import json, os, re, threading, time, http.client, urllib.request
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
@@ -177,6 +177,43 @@ def collector():
             LIVE.update({"ts": ts, "docker": ok, "host": h, "containers": ctrs, "apps": list(apps.values()), "interval": INTERVAL})
         time.sleep(INTERVAL)
 
+
+# ---------- weekly prices from the GitHub repo ----------
+PRICES_REPO = os.environ.get("PRICES_REPO", "AnvilDragon/rack-builder")
+PRICES_TOKEN = os.environ.get("PRICES_TOKEN", "")
+PRICES_EVERY = max(1, int(os.environ.get("PRICES_EVERY_HOURS", "6"))) * 3600
+PRICES = {"last": 0, "ok": False, "count": 0}
+KEY_RE = re.compile(r"^[A-Za-z0-9_\-.]{1,64}$")
+
+def fetch_prices():
+    req = urllib.request.Request(
+        "https://api.github.com/repos/%s/contents/prices.json" % PRICES_REPO,
+        headers={"Accept": "application/vnd.github.raw+json", "Authorization": "Bearer " + PRICES_TOKEN,
+                 "User-Agent": "rack-builder", "X-GitHub-Api-Version": "2022-11-28"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        data = json.loads(r.read())
+    changed = 0
+    with lock:
+        for k, v in data.items():
+            if KEY_RE.match(k) and isinstance(v, dict) and isinstance(v.get("price"), (int, float)):
+                key = "prices/" + k
+                if DATA["docs"].get(key) != v:
+                    DATA["docs"][key] = v
+                    changed += 1
+        if changed:
+            DATA["ver"] = DATA.get("ver", 0) + 1
+            save_state()
+    PRICES.update({"last": int(time.time()), "ok": True, "count": len(data)})
+
+def price_loop():
+    while True:
+        if PRICES_TOKEN and not PRICES_TOKEN.startswith("paste-"):
+            try:
+                fetch_prices()
+            except Exception:
+                PRICES.update({"last": int(time.time()), "ok": False})
+        time.sleep(PRICES_EVERY)
+
 # ---------- http ----------
 class H(BaseHTTPRequestHandler):
     def send(self, code, body, ctype="application/json"):
@@ -195,7 +232,7 @@ class H(BaseHTTPRequestHandler):
             with open(os.path.join(ROOT, "index.html"), "rb") as f:
                 return self.send(200, f.read(), "text/html; charset=utf-8")
         if p == "/api/ping":
-            return self.send(200, {"app": "rack-builder", "docker": bool(DOCKER)})
+            return self.send(200, {"app": "rack-builder", "docker": bool(DOCKER), "prices": PRICES})
         if p == "/api/state":
             with lock:
                 return self.send(200, DATA)
@@ -226,4 +263,5 @@ class H(BaseHTTPRequestHandler):
         pass
 
 threading.Thread(target=collector, daemon=True).start()
+threading.Thread(target=price_loop, daemon=True).start()
 ThreadingHTTPServer(("0.0.0.0", PORT), H).serve_forever()
