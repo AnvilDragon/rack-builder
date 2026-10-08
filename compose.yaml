@@ -4,11 +4,16 @@
 services:
   rack-builder:
     image: ghcr.io/anvildragon/rack-builder:latest
+    pull_policy: always   # the image is public: Restart in TrueNAS always fetches the current `latest`, no manual Pull Image step
     container_name: rack-builder
     restart: unless-stopped
     environment:
       - DOCKER_HOST_PROXY=socket-proxy:2375   # live per-app stats; remove with the socket-proxy service to turn off
-      - LIVE_INTERVAL=1   # seconds between updates
+      - LIVE_INTERVAL=1   # seconds between updates. This polls every container's stats from Docker every
+                           # LIVE_INTERVAL seconds regardless of whether anyone has the page open — most of a
+                           # NAS's "always-on" live-stats network traffic comes from this, not the browser. 3-5s
+                           # still feels live and cuts that traffic proportionally; raise it if that matters more
+                           # than second-by-second graphs.
       - COOKIE_SECURE=0   # set to 1 if you only reach it over HTTPS (reverse proxy)
       - PRICES_TOKEN=paste-your-read-only-token-here   # weekly prices from the repo; leave as-is to turn off
     ports:

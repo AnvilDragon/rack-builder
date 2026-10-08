@@ -238,7 +238,11 @@ async function collect() {
     let hq = HIST.get(key); if (!hq) HIST.set(key, hq = []);
     hq.push([ts, Math.round(a.cpu * 100) / 100, a.mem, Math.round(a.rx), Math.round(a.tx), Math.round(a.rd), Math.round(a.wr)]);
     if (hq.length > HIST_LEN) hq.shift();
-    a.hist = hq.slice();
+    // Not attached to `a` here on purpose: every poll used to resend the FULL up-to-120-sample
+    // history for every app, every second — a per-poll payload that grew without bound as apps
+    // ran longer, dwarfing everything else /rack/api/live sends. The client keeps its own
+    // rolling buffer and appends just the one new point each poll; /rack/api/live/history below
+    // is the one-shot catch-up fetch for a client that doesn't have a buffer yet.
   }
   for (const key of [...HIST.keys()]) if (!apps.has(key)) HIST.delete(key);
   Object.assign(LIVE, { ts, docker: ok, host: h, containers: ctrs, apps: [...apps.values()], interval: INTERVAL });
@@ -533,6 +537,9 @@ async function rackApi(req, res, url) {
   if (url === "/rack/api/ping" && m === "GET") return json(res, 200, { app: "rack-builder", docker: !!DOCKER, prices: PRICES });
   if (url === "/rack/api/state" && m === "GET") return json(res, 200, RB);
   if (url === "/rack/api/live" && m === "GET") return json(res, 200, LIVE);
+  // One-shot catch-up fetch: the full per-app history, for a client that just opened the NAS
+  // apps view and has no rolling buffer of its own yet. Not polled every second like /live.
+  if (url === "/rack/api/live/history" && m === "GET") return json(res, 200, { ts: LIVE.ts, history: Object.fromEntries(HIST) });
   if (url.startsWith("/rack/api/doc/") && m === "PUT") {
     const key = url.slice("/rack/api/doc/".length);
     if (!RB_PATH_RE.test(key)) return json(res, 404, { error: "not found" });
