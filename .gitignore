@@ -5,3 +5,5 @@ node_modules/
 hrt.db*
 hrt-seed.json
 first-user.txt
+.local-test-data/
+.claude/
