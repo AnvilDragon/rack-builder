@@ -46,6 +46,6 @@ services:
 x-portals:
   - name: Rack Builder
     scheme: http
-    host: 192.168.0.108   # your NAS IP
+    host: 0.0.0.0   # TrueNAS fills in the address you opened the app from
     port: 30251
     path: /

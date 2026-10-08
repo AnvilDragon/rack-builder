@@ -287,6 +287,11 @@ async function fetchPrices() {
 // Auth (shared by both apps)
 // =====================================================================================
 const hasUser = () => !!db.prepare("SELECT 1 FROM user WHERE id=1").get();
+// First-time setup is protected by a one-time code printed in the container log, so whoever
+// reaches the port first on the network cannot claim the login. Set SETUP_CODE to choose your own.
+const SETUP_CODE = hasUser() ? "" : (process.env.SETUP_CODE || crypto.randomBytes(6).toString("hex"));
+if (SETUP_CODE) console.log(`First-time setup: enter this setup code on the sign-in page: ${SETUP_CODE}`);
+const sameSecret = (a, b) => { const x = crypto.createHash("sha256").update(String(a)).digest(), y = crypto.createHash("sha256").update(String(b)).digest(); return crypto.timingSafeEqual(x, y); };
 const SCRYPT = { N: 16384, r: 8, p: 1 };
 function hashPw(pw) {
   const salt = crypto.randomBytes(16);
@@ -300,6 +305,7 @@ function checkPw(pw, stored) {
   return crypto.timingSafeEqual(got, want);
 }
 const sha = t => crypto.createHash("sha256").update(t).digest("hex");
+const DUMMY_PW = hashPw(crypto.randomBytes(16).toString("hex"));
 function newSession() {
   const t = crypto.randomBytes(32).toString("base64url");
   db.prepare("INSERT INTO session(h,exp) VALUES(?,?)").run(sha(t), Date.now() + SESSION_DAYS * 864e5);
@@ -330,8 +336,8 @@ const cleared = keys => keys.forEach(k => fails.delete(k));
 // HTTP helpers
 // =====================================================================================
 const SEC = {
-  // Rack Builder loads its fonts from Google Fonts, everything else is same-origin.
-  "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  // Everything is same-origin: no third-party fonts, scripts, images or trackers.
+  "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'",
   "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY", "Cross-Origin-Opener-Policy": "same-origin",
 };
 function send(res, code, body, headers = {}) {
@@ -344,7 +350,13 @@ function readBody(req, max = MAX_BODY) {
   return new Promise((resolve, reject) => {
     let n = 0; const chunks = [];
     req.on("data", c => { n += c.length; if (n > max) { reject(Object.assign(new Error("too large"), { code: 413 })); req.destroy(); } else chunks.push(c); });
-    req.on("end", () => { try { resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {}); } catch { reject(Object.assign(new Error("bad json"), { code: 400 })); } });
+    req.on("end", () => {
+      try {
+        const v = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+        if (!v || typeof v !== "object") throw 0; // handlers expect an object (or array for Rack docs)
+        resolve(v);
+      } catch { reject(Object.assign(new Error("bad json"), { code: 400 })); }
+    });
     req.on("error", reject);
   });
 }
@@ -365,7 +377,7 @@ const statics = new Map();
 function serveStatic(req, res, url) {
   const f = statics.get(url);
   if (!f) return send(res, 404, "Not found", { "Content-Type": "text/plain" });
-  const h = { "Content-Type": f.type, ETag: f.etag, "Cache-Control": "no-cache", Vary: "Accept-Encoding" };
+  const h = { "Content-Type": f.type, ETag: f.etag, "Cache-Control": "private, no-cache", Vary: "Accept-Encoding" };
   if (req.headers["if-none-match"] === f.etag) return send(res, 304, "", h);
   if (f.gz && /\bgzip\b/.test(req.headers["accept-encoding"] || "")) return send(res, 200, f.gz, { ...h, "Content-Encoding": "gzip", "Content-Length": f.gz.length });
   send(res, 200, f.buf, { ...h, "Content-Length": f.buf.length });
@@ -393,7 +405,10 @@ async function authApi(req, res, url) {
 
   if (url === "/api/auth/setup" && m === "POST") {
     if (hasUser()) return json(res, 409, { error: "already set up" });
+    const keys = [ipOf(req), "*"];
+    if (locked(keys)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
     const b = await readBody(req), u = String(b.username || "").trim(), p = String(b.password || "");
+    if (!SETUP_CODE || !sameSecret(String(b.code || "").trim().toLowerCase(), SETUP_CODE.toLowerCase())) { failed(keys); return json(res, 403, { error: "Wrong setup code. It is printed in the container log." }); }
     if (u.length < 1 || u.length > 64) return json(res, 400, { error: "Enter a username." });
     if (p.length < 10 || p.length > 256) return json(res, 400, { error: "Password must be at least 10 characters." });
     db.prepare("INSERT INTO user(id,username,pw) VALUES(1,?,?)").run(u, hashPw(p));
@@ -407,7 +422,10 @@ async function authApi(req, res, url) {
     const keys = [ipOf(req), "*"];
     if (locked(keys)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
     const b = await readBody(req), u = db.prepare("SELECT username,pw FROM user WHERE id=1").get();
-    const ok = u && String(b.username || "").trim().toLowerCase() === u.username.toLowerCase() && checkPw(String(b.password || ""), u.pw);
+    // Always run the password hash so a wrong username takes as long as a wrong password.
+    const nameOk = !!u && String(b.username || "").trim().toLowerCase() === u.username.toLowerCase();
+    const pwOk = checkPw(String(b.password || ""), u ? u.pw : DUMMY_PW);
+    const ok = nameOk && pwOk;
     if (!ok) { failed(keys); return json(res, 401, { error: "Wrong username or password." }); }
     cleared(keys);
     db.prepare("DELETE FROM session WHERE exp<?").run(Date.now());
@@ -439,6 +457,7 @@ async function hrtApi(req, res, url, q) {
   if (url === "/hrt/api/state" && m === "GET") return json(res, 200, { rev: getRev(), state: readState() });
   if (url === "/hrt/api/state" && m === "PUT") {
     const b = await readBody(req);
+    if (!b.state || typeof b.state !== "object" || Array.isArray(b.state)) return json(res, 400, { error: "bad state" }); // never wipe the log on a malformed save
     if (b.rev !== getRev()) return json(res, 409, { error: "stale", rev: getRev() });
     return json(res, 200, { rev: writeState(b.state) });
   }
@@ -452,7 +471,7 @@ async function hrtApi(req, res, url, q) {
     if (f === "csv") return send(res, 200, toCsv(readState()), { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="hrt-log-${stamp()}.csv"` });
     if (f === "sqlite") {
       // Backup contains the login hash and sessions too: strip them from the copy.
-      const tmp = path.join(DATA_DIR, `backup-${process.pid}.tmp`);
+      const tmp = path.join(DATA_DIR, `backup-${crypto.randomBytes(8).toString("hex")}.tmp`); // unique, so two exports cannot collide
       try {
         fs.rmSync(tmp, { force: true }); db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
         const bk = new DatabaseSync(tmp); bk.exec("DELETE FROM session; DELETE FROM user; VACUUM"); bk.close();

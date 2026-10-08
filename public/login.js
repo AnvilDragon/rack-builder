@@ -13,6 +13,8 @@
     $("go").textContent = isSetup ? "Create account" : "Sign in";
     $("hint").hidden = !isSetup;
     $("p2row").hidden = !isSetup;
+    $("coderow").hidden = !isSetup;
+    $("code").required = isSetup;
     $("p2").required = isSetup;
     $("p").autocomplete = isSetup ? "new-password" : "current-password";
     $("p").minLength = isSetup ? 10 : 1;
@@ -32,7 +34,7 @@
     $("go").disabled = true;
     fetch(setup ? "/api/auth/setup" : "/api/auth/login", {
       method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: u, password: p })
+      body: JSON.stringify(setup ? { username: u, password: p, code: $("code").value } : { username: u, password: p })
     }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, data: j }; }); })
       .then(function (r) { if (r.ok) location.replace(nextUrl()); else fail(r.data.error || "Couldn't sign in."); })
       .catch(function () { fail("Couldn't reach the server."); });

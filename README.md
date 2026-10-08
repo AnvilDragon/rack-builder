@@ -5,7 +5,7 @@ Two private home-lab apps in one container, behind one login:
 - **Rack Builder** (`/rack/`): home lab rack planner with phased buying steps, order tracking, a budget timeline and a live view of the TrueNAS apps.
 - **HRT Log** (`/hrt/`): single-user health journal with daily measurements, shots, labs and trends.
 
-Open the app, create a login on first visit (10+ character password), and use the bar at the top to switch apps or sign out. Everything, including the live Docker stats, needs the login. Sessions last 30 days, five bad attempts lock sign-in for 15 minutes, and changing the password signs out other devices.
+Open the app and create a login on first visit (10+ character password). First-time setup asks for a one-time **setup code**, which the container prints in its log on startup (TrueNAS: Apps > rack-builder > Logs; or set your own with `SETUP_CODE`). This stops anyone else on your network from claiming the login first. Then use the bar at the top to switch apps or sign out. Everything, including the live Docker stats, needs the login. Sessions last 30 days, five bad attempts lock sign-in for 15 minutes, and changing the password signs out other devices.
 
 ## Install on TrueNAS
 
@@ -39,8 +39,15 @@ The Data tab in HRT Log exports JSON (re-importable), CSV, or a SQLite backup. T
 
 ## Run locally
 
-`node server.js` (Node 22.13 or newer), then http://localhost:8080. Environment: `PORT`, `DATA_DIR` (default `./data`), `COOKIE_SECURE`, `DOCKER_HOST_PROXY`, `LIVE_INTERVAL`, `PRICES_TOKEN`, `PRICES_REPO`, `PRICES_EVERY_HOURS`.
+`node server.js` (Node 22.13 or newer), then http://localhost:8080. Environment: `PORT`, `DATA_DIR` (default `./data`), `COOKIE_SECURE`, `SETUP_CODE`, `DOCKER_HOST_PROXY`, `LIVE_INTERVAL`, `PRICES_TOKEN`, `PRICES_REPO`, `PRICES_EVERY_HOURS`.
 
 ## Install on your iPhone
 
 Open `http://<NAS IP>:30251` in **Safari**, sign in, then tap Share > **Add to Home Screen**. It opens full screen like an app, with one icon for both Rack Builder and HRT Log (use the bar at the top to switch). On your home Wi-Fi this works as is. To use it away from home, put it behind an HTTPS reverse proxy or VPN and set `COOKIE_SECURE=1`.
+
+## Privacy and security notes
+
+- Everything is served from your NAS: no third-party fonts, scripts, analytics or trackers (enforced by a strict Content-Security-Policy).
+- No personal data belongs in this repo. HRT data lives only in `hrt.db` in your dataset; keep `hrt-seed.json` and exports out of git.
+- Treat the dataset like medical records: snapshot or back it up to somewhere private. The JSON export contains your full log.
+- Serve it only on your LAN, or behind a VPN or HTTPS reverse proxy. Do not forward the port straight to the internet.

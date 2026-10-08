@@ -313,7 +313,7 @@ function renderSteps(R){
       const L=linkFor(i),LP=PRICE[i.ref];
       const chk=LP&&LP.checked&&!i.pEdited?`<small class="chk">price checked ${esc(String(LP.checked).slice(0,10))}</small>`:"";
       const sel=`<select class="ost" id="os-${i.id}" data-ost="${i.id}" aria-label="Order status">${STAT.map(([v,t])=>`<option value="${v}"${v===st?" selected":""}>${t}</option>`).join("")}</select>`;
-      let row=`<div class="buy st-${st}">${sel}<span class="nm">${i.qty>1?i.qty+"× ":""}${esc(i.name)}${chk}</span>${L?`<a class="lk" href="${L.u}" target="_blank" rel="noopener">${L.t}</a>`:`<span class="lk none">owned</span>`}<span class="pr">${money(isB&&paid!=null?paid:line)}</span><button class="od" data-od="${i.id}" aria-expanded="${openOrd.has(i.id)}" title="Order details">⋯</button></div>`;
+      let row=`<div class="buy st-${st}">${sel}<span class="nm">${i.qty>1?i.qty+"× ":""}${esc(i.name)}${chk}</span>${L?`<a class="lk" href="${esc(L.u)}" target="_blank" rel="noopener">${L.t}</a>`:`<span class="lk none">owned</span>`}<span class="pr">${money(isB&&paid!=null?paid:line)}</span><button class="od" data-od="${i.id}" aria-expanded="${openOrd.has(i.id)}" title="Order details">⋯</button></div>`;
       if(openOrd.has(i.id))row+=`<div class="oform">
         <label class="f">Store<input id="of-${i.id}-store" data-of="${i.id}" data-k="store" value="${esc(o.store||"")}"></label>
         <label class="f">Order #<input id="of-${i.id}-orderNo" data-of="${i.id}" data-k="orderNo" value="${esc(o.orderNo||"")}"></label>

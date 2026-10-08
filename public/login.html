@@ -21,6 +21,7 @@
   <form id="auth" autocomplete="on">
     <label>Username<input id="u" name="username" autocomplete="username" required autofocus></label>
     <label>Password<span class="hint" id="hint" hidden> 10+ characters</span><input id="p" name="password" type="password" autocomplete="current-password" required></label>
+    <label id="coderow" hidden>Setup code<span class="hint"> from the container log</span><input id="code" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
     <label id="p2row" hidden>Confirm password<input id="p2" type="password" autocomplete="new-password"></label>
     <p class="err" id="err" role="alert"></p>
     <button type="submit" id="go">Sign in</button>
