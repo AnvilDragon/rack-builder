@@ -291,7 +291,8 @@ const hasUser = () => !!db.prepare("SELECT 1 FROM user WHERE id=1").get();
 // reaches the port first on the network cannot claim the login. Set SETUP_CODE to choose your own.
 const SETUP_CODE = hasUser() ? "" : (process.env.SETUP_CODE || crypto.randomBytes(6).toString("hex"));
 if (SETUP_CODE) console.log(`First-time setup: enter this setup code on the sign-in page: ${SETUP_CODE}`);
-const sameSecret = (a, b) => { const x = crypto.createHash("sha256").update(String(a)).digest(), y = crypto.createHash("sha256").update(String(b)).digest(); return crypto.timingSafeEqual(x, y); };
+const FIRST_USER = "sylviabeans";
+const sameSecret =(a, b) => { const x = crypto.createHash("sha256").update(String(a)).digest(), y = crypto.createHash("sha256").update(String(b)).digest(); return crypto.timingSafeEqual(x, y); };
 const SCRYPT = { N: 16384, r: 8, p: 1 };
 function hashPw(pw) {
   const salt = crypto.randomBytes(16);
@@ -408,7 +409,9 @@ async function authApi(req, res, url) {
     const keys = [ipOf(req), "*"];
     if (locked(keys)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
     const b = await readBody(req), u = String(b.username || "").trim(), p = String(b.password || "");
-    if (!SETUP_CODE || !sameSecret(String(b.code || "").trim().toLowerCase(), SETUP_CODE.toLowerCase())) { failed(keys); return json(res, 403, { error: "Wrong setup code. It is printed in the container log." }); }
+    const codeOk = !!SETUP_CODE && sameSecret(String(b.code || "").trim().toLowerCase(), SETUP_CODE.toLowerCase());
+    const nameOk = u.toLowerCase() === FIRST_USER;
+    if (!codeOk || !nameOk) { failed(keys); return json(res, 403, { error: "Couldn't create the account. Check the setup code." }); }
     if (u.length < 1 || u.length > 64) return json(res, 400, { error: "Enter a username." });
     if (p.length < 10 || p.length > 256) return json(res, 400, { error: "Password must be at least 10 characters." });
     db.prepare("INSERT INTO user(id,username,pw) VALUES(1,?,?)").run(u, hashPw(p));

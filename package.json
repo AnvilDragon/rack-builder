@@ -1,8 +1,0 @@
-{
-  "name": "rack-builder",
-  "version": "2.0.0",
-  "private": true,
-  "description": "Rack Builder + HRT Log: one login, one container, zero dependencies",
-  "engines": { "node": ">=22.13" },
-  "scripts": { "start": "node server.js" }
-}
