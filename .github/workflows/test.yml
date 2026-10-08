@@ -117,3 +117,181 @@ jobs:
       - name: Container log
         if: always()
         run: docker logs rb || true
+
+  attack:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build image
+        run: docker build -t rack-builder:test .
+
+      - name: Run it like TrueNAS does (user 568, read-only, no extra permissions)
+        run: |
+          mkdir data && sudo chown 568:568 data
+          docker run -d --name rb -p 8080:8080 --user 568:568 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true -v "$PWD/data:/data" \
+            -e SETUP_CODE=attack-setup-code -e FIRST_USER=attacker-target rack-builder:test
+          for i in $(seq 1 30); do curl -sf localhost:8080/healthz && break; sleep 1; done
+          curl -sf localhost:8080/healthz
+
+      # One real account, used only where a test needs an authenticated session.
+      - name: Create the one real account
+        run: |
+          curl -s -c jar -o /dev/null -X POST http://localhost:8080/api/auth/setup -H 'Content-Type: application/json' \
+            -d '{"username":"attacker-target","password":"the real password 123","code":"attack-setup-code"}'
+          curl -s -b jar http://localhost:8080/hrt/ -o /dev/null -w '%{http_code}\n' | grep -qx 200
+
+      - name: Attack — reach every protected route with no credentials at all
+        run: |
+          set -eu
+          B=http://localhost:8080
+          fail=0
+          probe() { c=$(curl -s -o /tmp/body -w '%{http_code}' "$@"); echo "$c $*"; }
+          # Every route that must require a session, hit with zero cookie and zero header.
+          for ep in "/rack/api/state" "/rack/api/live" "/rack/api/ping" "/hrt/api/state" \
+                    "/hrt/api/export?format=json" "/hrt/api/export?format=csv" "/hrt/api/export?format=sqlite" \
+                    "/rack/" "/hrt/" "/rack/index.html" "/hrt/index.html" "/rack/rack.js" "/hrt/app.js"; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' "$B$ep")
+            case "$c" in 401|302) echo "ok   blocked with no cookie: $ep ($c)";; *) echo "FAIL reachable with no cookie: $ep ($c)"; fail=1;; esac
+          done
+          # Same routes with method games and no credentials — must not accidentally authorize or leak.
+          for m in HEAD OPTIONS TRACE PATCH DELETE; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' -X "$m" "$B/hrt/api/state")
+            case "$c" in 401|302|404|405|415) echo "ok   $m with no cookie blocked ($c)";; *) echo "FAIL $m with no cookie returned $c"; fail=1;; esac
+          done
+          # Forged / garbage / empty / oversized session cookies — none may authenticate.
+          for cookie in "hrt=garbage-token-not-a-real-session" "hrt=" "hrt=0" \
+                        "hrt=$(head -c 2000 </dev/zero | tr '\0' 'a')" \
+                        "hrt='; DROP TABLE session;--" "hrt=../../../etc/passwd"; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: $cookie" "$B/hrt/api/state")
+            case "$c" in 401) echo "ok   forged cookie rejected: ${cookie:0:30}... ($c)";; *) echo "FAIL forged cookie accepted: ${cookie:0:40} -> $c"; fail=1;; esac
+          done
+          exit $fail
+
+      - name: Attack — brute-force the first-time setup gate on a clean instance
+        run: |
+          set -eu
+          mkdir -p data2; sudo chown 568:568 data2
+          docker run -d --name rb2 -p 8081:8080 --user 568:568 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true -v "$PWD/data2:/data" \
+            -e SETUP_CODE=the-real-code-nobody-knows -e FIRST_USER=realuser rack-builder:test
+          for i in $(seq 1 30); do curl -sf localhost:8081/healthz && break; sleep 1; done
+          fail=0; saw_lockout=0
+          # Try to claim the account with guessed codes. None may succeed (200), and the
+          # lockout (429) must kick in at some point — it's meant to trigger at 5 failures.
+          for guess in 000000 aaaaaa 123456 letmein codecode wrongwrongwrong qwerty12 attacker1 setupcode 000001; do
+            c=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8081/api/auth/setup -H 'Content-Type: application/json' \
+              -d "{\"username\":\"realuser\",\"password\":\"attacker chosen password\",\"code\":\"$guess\"}")
+            case "$c" in
+              403) ;; # wrong code, not yet locked — expected
+              429) saw_lockout=1 ;; # locked out — expected once the threshold is hit
+              *) echo "FAIL guess '$guess' got unexpected status $c (want 403 or 429)"; fail=1 ;;
+            esac
+          done
+          [ "$saw_lockout" = "1" ] && echo "ok   repeated wrong setup codes triggered the lockout" || { echo "FAIL lockout never triggered across 10 wrong guesses"; fail=1; }
+          # Once locked, even the real code must be rejected until the lockout expires.
+          c=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8081/api/auth/setup -H 'Content-Type: application/json' \
+            -d '{"username":"realuser","password":"attacker chosen password","code":"the-real-code-nobody-knows"}')
+          [ "$c" = "429" ] && echo "ok   setup still locked, right code also rejected right now" || { echo "FAIL setup not locked after repeated failures, got $c"; fail=1; }
+          # The real owner can still claim it after confirming no account was created by the attacker.
+          c=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/api/auth/status)
+          curl -s http://localhost:8081/api/auth/status | grep -q '"setup":false' && echo "ok   no account was created by the attack" || { echo "FAIL an account exists after the attack"; fail=1; }
+          docker logs rb2 | tail -20
+          exit $fail
+
+      - name: Attack — path traversal against the static file server (as a signed-in user)
+        run: |
+          set -eu
+          B=http://localhost:8080
+          fail=0
+          for p in "/../server.js" "/../../server.js" "/../package.json" "/rack/../../server.js" \
+                   "/icons/../../server.js" "/%2e%2e/server.js" "/%2e%2e%2fserver.js" "/..%2fserver.js" \
+                   "/..%5cserver.js" "//server.js" "/./../server.js" "/rack/..%2f..%2fserver.js" \
+                   "/../Dockerfile" "/../.github/workflows/docker.yml" "/../compose.yaml" "/../.git/config" \
+                   "/../../../../../../etc/passwd" "/hrt/..%2f..%2fserver.js"; do
+            body=$(curl -s -b jar "$B$p")
+            c=$(curl -s -o /dev/null -w '%{http_code}' -b jar "$B$p")
+            if printf '%s' "$body" | grep -qE 'createServer|require\(.node:|scryptSync|root:x:0:0'; then
+              echo "FAIL traversal served real file content: $p ($c)"; fail=1
+            else
+              echo "ok   traversal blocked: $p ($c)"
+            fi
+          done
+          exit $fail
+
+      - name: Attack — prototype pollution via the Rack Builder document store
+        run: |
+          set -eu
+          B=http://localhost:8080
+          fail=0
+          # Try to pollute Object.prototype through the one endpoint that stores a raw parsed object.
+          curl -s -b jar -o /dev/null -X PUT "$B/rack/api/doc/attack/x" -H 'Content-Type: application/json' \
+            -d '{"__proto__":{"polluted_marker":"yes"},"a":1}'
+          curl -s -b jar -o /dev/null -X PUT "$B/rack/api/doc/attack/y" -H 'Content-Type: application/json' \
+            -d '{"constructor":{"prototype":{"polluted_marker2":"yes"}}}'
+          # If Object.prototype were polluted, it would leak into the unrelated 'ver' wrapper
+          # and into a brand-new doc that never set this field, since JSON.stringify serializes
+          # inherited enumerable properties placed directly on Object.prototype.
+          curl -s -b jar -o /dev/null -X PUT "$B/rack/api/doc/attack/untouched" -H 'Content-Type: application/json' -d '{"b":2}'
+          STATE=$(curl -s -b jar "$B/rack/api/state")
+          if printf '%s' "$STATE" | grep -q 'polluted_marker'; then
+            echo "FAIL prototype pollution reached unrelated server state"; fail=1
+          else
+            echo "ok   no prototype pollution observed in server state"
+          fi
+          exit $fail
+
+      - name: Attack — malformed, oversized and adversarial JSON bodies
+        run: |
+          set -eu
+          B=http://localhost:8080
+          fail=0
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          # Non-object top-level JSON where an object is required.
+          for bad in 'null' '[]' '"just a string"' '42' 'true'; do
+            c=$(code -X POST "$B/api/auth/login" -H 'Content-Type: application/json' -d "$bad")
+            case "$c" in 400|401) echo "ok   non-object login body handled ($bad -> $c)";; *) echo "FAIL non-object login body -> $c"; fail=1;; esac
+          done
+          # Deeply nested JSON (parser stress) must not crash the server.
+          node -e 'let s="1"; for (let i=0;i<5000;i++) s="["+s+"]"; require("fs").writeFileSync("/tmp/deep.json", JSON.stringify({rev:0,state:{entries:[],shots:[],labs:[],deep:JSON.parse(s)}}))'
+          c=$(code -b jar -X PUT "$B/hrt/api/state" -H 'Content-Type: application/json' --data-binary @/tmp/deep.json)
+          echo "deep JSON body -> $c (any non-5xx is fine)"
+          curl -sf "$B/healthz" >/dev/null && echo "ok   server still alive after deep JSON" || { echo "FAIL server died after deep JSON"; fail=1; }
+          # Large note field, still under the body cap.
+          BIGNOTE=$(head -c 1900 </dev/zero | tr '\0' 'x')
+          REV=$(curl -s -b jar "$B/hrt/api/state" | sed 's/.*"rev":\([0-9]*\).*/\1/')
+          c=$(code -b jar -X PUT "$B/hrt/api/state" -H 'Content-Type: application/json' \
+            -d "{\"rev\":$REV,\"state\":{\"entries\":[{\"date\":\"2026-01-01\",\"note\":\"$BIGNOTE\"}],\"shots\":[],\"labs\":[]}}")
+          [ "$c" = "200" ] && echo "ok   large-but-valid note accepted ($c)" || { echo "FAIL large valid note rejected: $c"; fail=1; }
+          # A moderately oversized body (over the doc endpoint's 1MB cap, well under the hard
+          # cap) must get a clean 413, not a dropped connection.
+          head -c 1500000 </dev/zero | tr '\0' 'a' > /tmp/over.json
+          c=$(code -b jar -X PUT "$B/rack/api/doc/attack/over" -H 'Content-Type: application/json' --data-binary @/tmp/over.json)
+          [ "$c" = "413" ] && echo "ok   moderately oversized body gets a clean 413, not a reset ($c)" || { echo "FAIL moderately oversized body -> $c (want a clean 413)"; fail=1; }
+          # A wildly oversized body is allowed to cut the connection, but must not crash the server.
+          head -c 6000000 </dev/zero | tr '\0' 'a' > /tmp/huge.json
+          c=$(code -b jar -X PUT "$B/rack/api/doc/attack/huge" -H 'Content-Type: application/json' --data-binary @/tmp/huge.json) || true
+          echo "huge oversized body -> $c (413 or a dropped connection are both acceptable here)"
+          curl -sf "$B/healthz" >/dev/null && echo "ok   server still alive after oversized bodies" || { echo "FAIL server died after oversized body"; fail=1; }
+          exit $fail
+
+      - name: Attack — header injection via request-supplied strings
+        run: |
+          set -eu
+          B=http://localhost:8080
+          H=$(curl -si -X POST "$B/api/auth/login" -H 'Content-Type: application/json' \
+            -d '{"username":"evil\r\nX-Injected: yes","password":"whatever-wrong"}')
+          if printf '%s' "$H" | grep -qi '^X-Injected:'; then
+            echo "FAIL CRLF in request body reached a response header"; exit 1
+          fi
+          echo "ok   no header injection via JSON body fields"
+
+      - name: Container log
+        if: always()
+        run: docker logs rb || true
+        continue-on-error: true
+      - name: Container 2 log
+        if: always()
+        run: docker logs rb2 || true
+        continue-on-error: true

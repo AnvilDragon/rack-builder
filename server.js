@@ -348,13 +348,24 @@ function send(res, code, body, headers = {}) {
 const json = (res, code, obj, h) => send(res, code, JSON.stringify(obj), { "Content-Type": "application/json; charset=utf-8", ...h });
 const redirect = (res, to) => send(res, 302, "", { Location: to });
 function readBody(req, max = MAX_BODY) {
+  // A moderately oversized body is drained (not buffered) and gets a clean 413.
+  // Only a wildly oversized one — someone actually trying to flood us — cuts the
+  // connection outright, so a normal client never sees a dropped connection instead
+  // of an error it can understand.
+  const HARD_CAP = Math.max(max * 4, 2 * 1024 * 1024);
   return new Promise((resolve, reject) => {
-    let n = 0; const chunks = [];
-    req.on("data", c => { n += c.length; if (n > max) { reject(Object.assign(new Error("too large"), { code: 413 })); req.destroy(); } else chunks.push(c); });
+    let n = 0, tooLarge = false; const chunks = [];
+    req.on("data", c => {
+      n += c.length;
+      if (n > HARD_CAP) { reject(Object.assign(new Error("too large"), { code: 413 })); req.destroy(); return; }
+      if (n > max) { tooLarge = true; return; }
+      chunks.push(c);
+    });
     req.on("end", () => {
+      if (tooLarge) return reject(Object.assign(new Error("too large"), { code: 413 }));
       try {
         const v = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
-        if (!v || typeof v !== "object") throw 0; // handlers expect an object (or array for Rack docs)
+        if (!v || typeof v !== "object" || Array.isArray(v)) throw 0; // every handler expects a plain object
         resolve(v);
       } catch { reject(Object.assign(new Error("bad json"), { code: 400 })); }
     });
