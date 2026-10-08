@@ -409,7 +409,7 @@ function cardsHTML(){if(!LIVE||!LIVE.apps||!LIVE.apps.length)return"";const A=ap
   const mp=matchApps(LIVE.apps.map(a=>a.project));
   const rows=LIVE.apps.map(a=>({a,app:mp[a.project]})).filter(r=>!/rack-?builder/.test(r.a.project));
   rows.sort((x,y)=>(x.app?A.apps.indexOf(x.app):999)-(y.app?A.apps.indexOf(y.app):999));
-  return `<div class="lcards">${rows.map(({a,app})=>{const h=a.hist||[],col=(app&&app.color)||"#4f7cac",hl=String(a.health||"");
+  return `<div class="lcards">${rows.map(({a,app})=>{const h=CHIST[a.project]||[],col=(app&&app.color)||"#4f7cac",hl=String(a.health||"");
     const st=/unhealthy/.test(hl)?["bad","Unhealthy"]:/starting/.test(hl)?["warn","Starting"]:["ok","Running"];
     const name=app?app.name:String(a.project).replace(/^ix-/,"");
     return `<div class="lcard"><div class="lh"><span class="sq" style="background:${esc(col)}"></span><b title="${esc(name)}">${esc(name)}</b><span class="ldot ${st[0]}">${st[1]}</span></div><div class="lg">
@@ -486,7 +486,7 @@ $("importData").addEventListener("click",async()=>{let d;try{d=JSON.parse($("imp
 const KIOSK=location.hash==="#live";if(KIOSK)document.body.classList.add("kiosk");
 let VIEW=KIOSK||location.hash==="#apps"?"apps":(()=>{try{return localStorage.getItem("rb.view")||"plan"}catch(e){return "plan"}})();
 function setView(v){VIEW=v;if(!KIOSK)try{localStorage.setItem("rb.view",v)}catch(e){}$("viewPlan").hidden=v!=="plan";$("planStats").hidden=v!=="plan";$("viewApps").hidden=v!=="apps";
-  $("v-plan").setAttribute("aria-selected",v==="plan");$("v-apps").setAttribute("aria-selected",v==="apps");if(v==="apps")renderApps()}
+  $("v-plan").setAttribute("aria-selected",v==="plan");$("v-apps").setAttribute("aria-selected",v==="apps");if(v==="apps"){fetchHistory();renderApps()}}
 document.addEventListener("click",e=>{const b=e.target.closest("[data-view]");if(b)setView(b.dataset.view)});
 function setSync(){const kl=$("kioskLink");if(kl)kl.hidden=!(LIVE&&LIVE.apps&&LIVE.apps.length);
   $("sync").textContent=SRV?(LIVE&&LIVE.docker?"Running on your NAS · live stats on":"Running on your NAS"):DB?"Synced: orders, prices and apps save to this page":dbState==="off"?"Saving in this browser only":"Connecting…"}
@@ -532,7 +532,20 @@ function applyLiveApps(){if(!LIVE||!LIVE.containers)return;const A=apState(),see
   if(A.host&&LIVE.host&&LIVE.host.memTotal&&!A.host.ramSet){A.host.ram=Math.round(LIVE.host.memTotal/1073741824)}
   A.usedAt=new Date(LIVE.ts*1000).toISOString()}
 let liveSaveAt=0,addedLive=false;
+// Per-project rolling history for the sparklines, built up client-side one point per poll.
+// /rack/api/live itself carries no history (see the comment in server.js's collect()) — the
+// server used to resend the full ~120-sample window for every app on every 1-second poll,
+// which dominated the live-stats bandwidth. fetchHistory() does a one-shot backfill when the
+// apps view opens, and from then on each poll only ever adds the single new point it got.
+let CHIST={};
+async function fetchHistory(){try{const r=await fetch("api/live/history",{cache:"no-store"});if(!r.ok)return;const j=await r.json();
+  for(const k in j.history)if(!CHIST[k]||!CHIST[k].length)CHIST[k]=j.history[k]}catch(e){}}
+function pushHist(a,ts){let hq=CHIST[a.project];if(!hq)hq=CHIST[a.project]=[];
+  hq.push([ts,Math.round((a.cpu||0)*100)/100,a.mem||0,Math.round(a.rx||0),Math.round(a.tx||0),Math.round(a.rd||0),Math.round(a.wr||0)]);
+  if(hq.length>120)hq.shift()}
 async function pollLive(){try{const r=await fetch("api/live",{cache:"no-store"});if(!r.ok)return;LIVE=await r.json();applyLiveApps();
+  (LIVE.apps||[]).forEach(a=>pushHist(a,LIVE.ts));
+  for(const k in CHIST)if(!(LIVE.apps||[]).some(a=>a.project===k))delete CHIST[k];
   const wasAdded=addedLive;if(addedLive||Date.now()-liveSaveAt>300000){liveSaveAt=Date.now();apSave()}addedLive=wasAdded;
   if(VIEW==="apps"){if(addedLive||!$("apCards"))renderApps();else apRefresh()}addedLive=false}catch(e){}}
 function liveLoop(){pollLive().finally(()=>setTimeout(liveLoop,VIEW==="apps"?((LIVE&&LIVE.interval)||5)*1000:30000))}

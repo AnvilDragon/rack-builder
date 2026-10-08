@@ -63,6 +63,9 @@ jobs:
           expect "$(code -b jar $B/hrt/app.js)" 200 "hrt app.js loads"
           expect "$(code -b jar $B/rack/api/ping)" 200 "rack ping"
           expect "$(code -b jar $B/rack/api/live)" 200 "rack live"
+          expect "$(code -b jar $B/rack/api/live/history)" 200 "rack live history"
+          if curl -s -b jar $B/rack/api/live | grep -q '"hist"'; then echo "FAIL /rack/api/live still carries per-app hist on every poll (the bandwidth fix regressed)"; exit 1; fi
+          echo "ok   /rack/api/live carries no per-app history (client builds its own)"
           expect "$(code -b jar $B/rack/api/state)" 200 "rack state"
 
           # Rack Builder document save round trip

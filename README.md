@@ -9,7 +9,7 @@ Open the app and create a login on first visit (10+ character password). First-t
 
 ## Install on TrueNAS
 
-1. **Pull the private image.** Make a GitHub token (classic) with only `read:packages`. In TrueNAS: Apps > Manage Images > Pull Image: name `ghcr.io/anvildragon/rack-builder`, tag `latest`, username `AnvilDragon`, password = the token.
+1. **Pull the image.** The image is public, no token needed. In TrueNAS: Apps > Manage Images > Pull Image: name `ghcr.io/anvildragon/rack-builder`, tag `latest`.
 2. **Make a dataset** such as `apps/rack-builder` and give the `apps` user (568) read/write access. Both apps keep their data there (`state.json` for Rack Builder, `hrt.db` for HRT Log).
 3. **Apps > Discover Apps > three-dot menu > Install via YAML.** Paste `compose.yaml` and change `/mnt/POOL/apps/rack-builder` to your dataset path.
 4. Open `http://<NAS IP>:30251`, or use the app's Web UI button.
@@ -21,7 +21,7 @@ Open the app and create a login on first visit (10+ character password). First-t
 
 ## Updating
 
-Every push to `main` builds a new image. To update, pull the image again in Apps > Manage Images, then restart the app.
+Every push to `main` builds a new image. Just hit **Restart** on the app in TrueNAS — `pull_policy: always` in `compose.yaml` means it always fetches the current `latest` first, no manual Pull Image step needed.
 
 ## Live stats
 
