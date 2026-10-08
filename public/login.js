@@ -4,7 +4,8 @@
   // Only same-site paths: never follow ?next=//evil.com or ?next=https://...
   function nextUrl() {
     var n = new URLSearchParams(location.search).get("next") || "";
-    return /^\/(?![\/\])/.test(n) ? n : "/rack/";
+    var bs = String.fromCharCode(92); // backslash
+    return n.charAt(0) === "/" && n.charAt(1) !== "/" && n.charAt(1) !== bs ? n : "/rack/";
   }
   function show(isSetup) {
     setup = isSetup;
