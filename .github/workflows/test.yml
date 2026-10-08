@@ -234,12 +234,20 @@ jobs:
           # and into a brand-new doc that never set this field, since JSON.stringify serializes
           # inherited enumerable properties placed directly on Object.prototype.
           curl -s -b jar -o /dev/null -X PUT "$B/rack/api/doc/attack/untouched" -H 'Content-Type: application/json' -d '{"b":2}'
-          STATE=$(curl -s -b jar "$B/rack/api/state")
-          if printf '%s' "$STATE" | grep -q 'polluted_marker'; then
-            echo "FAIL prototype pollution reached unrelated server state"; fail=1
+          # The real signal is whether the marker leaks into a doc that never set it, not
+          # whether it appears anywhere in the dump (attack/x legitimately contains it, since
+          # we just stored it there as ordinary data under its own key).
+          UNTOUCHED=$(node -e 'const s=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(JSON.stringify(s.docs["attack/untouched"]))' < <(curl -s -b jar "$B/rack/api/state"))
+          if printf '%s' "$UNTOUCHED" | grep -q 'polluted_marker'; then
+            echo "FAIL prototype pollution reached an unrelated doc: $UNTOUCHED"; fail=1
           else
-            echo "ok   no prototype pollution observed in server state"
+            echo "ok   no prototype pollution observed in an unrelated doc ($UNTOUCHED)"
           fi
+          # Also check a brand-new plain object server-side would never pick this up —
+          # the clearest proof is that a doc key nobody ever PUT at all comes back absent,
+          # not materialized with inherited junk, when we ask for the whole state.
+          NEVER_SET=$(node -e 'const s=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(JSON.stringify(s.docs["attack/never-set-this-key"] ?? null))' < <(curl -s -b jar "$B/rack/api/state"))
+          [ "$NEVER_SET" = "null" ] && echo "ok   an untouched doc key stays absent, not polluted ($NEVER_SET)" || { echo "FAIL untouched doc key materialized as: $NEVER_SET"; fail=1; }
           exit $fail
 
       - name: Attack — malformed, oversized and adversarial JSON bodies
