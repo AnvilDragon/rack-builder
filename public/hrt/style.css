@@ -1,8 +1,8 @@
 *{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}img{max-width:100%}[hidden]{display:none!important}
 :root{
   /* Light: trans pride (light blue / pink / white) */
-  --bg:#eef9ff;--card:#ffffff;--ink:#1c2b3a;--muted:#64788a;--line:#d8e8f2;
-  --accent:#e8559a;--accent-soft:#fce3ef;--blue:#2fa9e0;--warn:#a5650e;--warn-soft:#fbefd9;--ok:#2f7d55;
+  --bg:#d6eefb;--card:#fff5fa;--ink:#24303f;--muted:#6b7a8c;--line:#f0cfe0;
+  --accent:#e8559a;--accent-soft:#fbdcec;--blue:#1f9ad6;--warn:#a5650e;--warn-soft:#fbefd9;--ok:#2f7d55;
   --display:"Fraunces",Georgia,serif;--body:"Figtree",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
