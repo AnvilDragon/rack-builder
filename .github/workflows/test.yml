@@ -8,7 +8,7 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Syntax check
         run: |
@@ -35,6 +35,7 @@ jobs:
           B=http://localhost:8080
           J='Content-Type: application/json'
           code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          must() { if ! bash -c "$1" >/dev/null 2>&1; then echo "FAIL $2"; docker logs rb | tail -30; exit 1; fi; echo "ok   $2"; }
           expect() { [ "$1" = "$2" ] || { echo "FAIL $3: got $1, want $2"; docker logs rb | tail -30; exit 1; }; echo "ok   $3"; }
 
           expect "$(code $B/)" 302 "signed-out / redirects to login"
@@ -90,7 +91,28 @@ jobs:
           expect "$(code -b jar2 $B/hrt/)" 200 "signed in again"
 
           # Data lives on the volume, not in the image
-          test -f data/hrt.db && test -f data/state.json && echo "ok   data written to the mounted volume"
+          must "test -f data/hrt.db && test -f data/state.json" "data written to the mounted volume"
+
+          # Security headers and cookie flags
+          H=$(curl -sI $B/login.html)
+          printf '%s' "$H" > headers.txt; must "grep -qiE '^content-security-policy:.*script-src .self.' headers.txt" "CSP restricts scripts to same origin"
+          if echo "$H" | grep -i '^content-security-policy:' | grep -qiE 'googleapis|gstatic|https?://'; then echo "FAIL CSP allows a third-party origin"; exit 1; fi; echo "ok   CSP allows no third-party origin"
+          must "grep -qi '^x-content-type-options: nosniff' headers.txt" "nosniff"
+          must "grep -qi '^referrer-policy: no-referrer' headers.txt" "no referrer sent"
+          must "grep -qi '^x-frame-options: deny' headers.txt" "clickjacking blocked"
+          curl -si -X POST $B/api/auth/login -H "$J" -d '{"username":"ci-user","password":"correct horse battery"}' | grep -i '^set-cookie:' > cookie.txt
+          must "grep -qi HttpOnly cookie.txt && grep -qi SameSite=Strict cookie.txt" "session cookie is HttpOnly + SameSite=Strict"
+          expect "$(curl -s -o /dev/null -w '%{http_code}' -b jar2 -X POST $B/api/auth/logout -H "$J" -H 'Origin: http://evil.example' -d '{}')" 403 "cross-site POST rejected"
+          expect "$(code -b jar2 "$B/hrt/api/export?format=json")" 200 "export works when signed in"
+          expect "$(code "$B/hrt/api/export?format=json")" 401 "export blocked when signed out"
+
+          # No third-party resources in any page
+          if grep -rEn '<(link|script|img|iframe)[^>]*(src|href)=.?https?://' public --include=*.html; then echo "FAIL a page loads a third-party resource"; exit 1; fi
+          echo "ok   pages load nothing from third parties"
+
+          # Lockout: five wrong passwords lock sign-in, even for the right password
+          for i in 1 2 3 4 5; do code -X POST $B/api/auth/login -H "$J" -d '{"username":"ci-user","password":"wrong-wrong-wrong"}' > /dev/null; done
+          expect "$(code -X POST $B/api/auth/login -H "$J" -d '{"username":"ci-user","password":"correct horse battery"}')" 429 "sign-in locked after repeated failures"
 
       - name: Container log
         if: always()
