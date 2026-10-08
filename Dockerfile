@@ -1,9 +1,11 @@
-FROM python:3.12-alpine
+FROM node:22-alpine
+ENV NODE_ENV=production NODE_NO_WARNINGS=1 DATA_DIR=/data PORT=8080
 WORKDIR /app
-COPY app/ /app/
-ENV PORT=8080 DATA_DIR=/data
-RUN mkdir -p /data && chown 568:568 /data
+COPY package.json server.js ./
+COPY public ./public
+RUN mkdir /data && chown 568:568 /data
 USER 568:568
+VOLUME /data
 EXPOSE 8080
-HEALTHCHECK --interval=60s --timeout=5s --start-period=30s --start-interval=2s CMD wget -qO- http://127.0.0.1:8080/api/ping || exit 1
-CMD ["python", "/app/server.py"]
+HEALTHCHECK --interval=60s --timeout=5s --start-period=30s --start-interval=2s CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
+CMD ["node", "server.js"]

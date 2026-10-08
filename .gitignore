@@ -1,2 +1,7 @@
 state.json
 state.json.tmp
+data/
+node_modules/
+hrt.db*
+hrt-seed.json
+first-user.txt
