@@ -293,6 +293,40 @@ jobs:
           curl -sf "$B/healthz" >/dev/null && echo "ok   server still alive after oversized bodies" || { echo "FAIL server died after oversized body"; fail=1; }
           exit $fail
 
+      - name: Attack — a burst of concurrent wrong-password logins must not evade the lockout
+        run: |
+          set -eu
+          mkdir -p data3; sudo chown 568:568 data3
+          docker run -d --name rb3 -p 8082:8080 --user 568:568 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true -v "$PWD/data3:/data" \
+            -e SETUP_CODE=burst-setup-code -e FIRST_USER=burstuser rack-builder:test
+          for i in $(seq 1 30); do curl -sf localhost:8082/healthz && break; sleep 1; done
+          curl -s -o /dev/null -X POST http://localhost:8082/api/auth/setup -H 'Content-Type: application/json' \
+            -d '{"username":"burstuser","password":"the real password 123","code":"burst-setup-code"}'
+          # Fire 30 wrong-password logins at once, all from this one source. The lockout is
+          # meant to allow 5 real attempts before locking — if the check-then-record step isn't
+          # atomic with respect to concurrent requests, far more than 5 could get a genuine
+          # password check (401) instead of being turned away up front (429).
+          rm -rf /tmp/burst; mkdir /tmp/burst
+          for i in $(seq 1 30); do
+            curl -s -o /dev/null -w '%{http_code}\n' -X POST http://localhost:8082/api/auth/login \
+              -H 'Content-Type: application/json' -d '{"username":"burstuser","password":"wrong-guess-'"$i"'"}' \
+              > "/tmp/burst/$i" &
+          done
+          wait
+          n401=$(cat /tmp/burst/* | grep -c '^401$' || true)
+          n429=$(cat /tmp/burst/* | grep -c '^429$' || true)
+          nother=$(cat /tmp/burst/* | grep -vc '^401$\|^429$' || true)
+          echo "concurrent burst: $n401 real checks (401), $n429 turned away (429), $nother other"
+          [ "$nother" = "0" ] && echo "ok   every concurrent request got a clean 401 or 429, nothing else" || { echo "FAIL unexpected status codes in the burst"; docker logs rb3 | tail -30; exit 1; }
+          [ "$n401" -le 5 ] && echo "ok   at most 5 of 30 concurrent guesses got a real password check ($n401)" || { echo "FAIL the lockout let $n401 of 30 concurrent guesses through (want <= 5)"; docker logs rb3 | tail -30; exit 1; }
+          # The real password must still work once the lockout window is respected — i.e. the
+          # account itself is intact and not corrupted by the burst, even while still locked.
+          c=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8082/api/auth/login \
+            -H 'Content-Type: application/json' -d '{"username":"burstuser","password":"the real password 123"}')
+          [ "$c" = "429" ] && echo "ok   still locked right after the burst, even for the real password ($c)" || { echo "FAIL expected still-locked (429), got $c"; exit 1; }
+          docker logs rb3 | tail -20
+
       - name: Attack — header injection via request-supplied strings
         run: |
           set -eu
@@ -311,4 +345,8 @@ jobs:
       - name: Container 2 log
         if: always()
         run: docker logs rb2 || true
+        continue-on-error: true
+      - name: Container 3 log
+        if: always()
+        run: docker logs rb3 || true
         continue-on-error: true
