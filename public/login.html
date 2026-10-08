@@ -18,7 +18,7 @@
 <main class="box">
   <h1 id="title">Sign in</h1>
   <p class="sub" id="sub">Rack Builder and HRT Log share this login.</p>
-  <form id="auth" autocomplete="on">
+  <form id="auth" method="post" action="/login.html" autocomplete="on">
     <label>Username<input id="u" name="username" autocomplete="username" required autofocus></label>
     <label>Password<span class="hint" id="hint" hidden> 10+ characters</span><input id="p" name="password" type="password" autocomplete="current-password" required></label>
     <label id="coderow" hidden>Setup code<span class="hint"> from the container log</span><input id="code" autocomplete="off" autocapitalize="off" spellcheck="false"></label>

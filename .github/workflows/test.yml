@@ -14,6 +14,9 @@ jobs:
         run: |
           for f in server.js public/*.js public/rack/*.js public/hrt/*.js; do node --check "$f"; done
 
+      - name: Sign-in form must never put credentials in the URL
+        run: grep -q "<form id=\"auth\" method=\"post\"" public/login.html
+
       - name: Build image
         run: docker build -t rack-builder:test .
 
