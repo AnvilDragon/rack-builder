@@ -261,11 +261,20 @@ jobs:
             c=$(code -X POST "$B/api/auth/login" -H 'Content-Type: application/json' -d "$bad")
             case "$c" in 400|401) echo "ok   non-object login body handled ($bad -> $c)";; *) echo "FAIL non-object login body -> $c"; fail=1;; esac
           done
-          # Deeply nested JSON (parser stress) must not crash the server.
-          node -e 'let s="1"; for (let i=0;i<5000;i++) s="["+s+"]"; require("fs").writeFileSync("/tmp/deep.json", JSON.stringify({rev:0,state:{entries:[],shots:[],labs:[],deep:JSON.parse(s)}}))'
-          c=$(code -b jar -X PUT "$B/hrt/api/state" -H 'Content-Type: application/json' --data-binary @/tmp/deep.json)
-          echo "deep JSON body -> $c (any non-5xx is fine)"
+          # Deeply nested JSON (parser stress), built by plain string repetition so building the
+          # fixture itself can't blow a recursive serializer the way the thing under test might.
+          node -e 'const n=5000; require("fs").writeFileSync("/tmp/deep-hrt.json", "{\"rev\":0,\"state\":{\"entries\":[],\"shots\":[],\"labs\":[],\"deep\":"+"[".repeat(n)+"1"+"]".repeat(n)+"}}")'
+          c=$(code -b jar -X PUT "$B/hrt/api/state" -H 'Content-Type: application/json' --data-binary @/tmp/deep-hrt.json)
+          echo "deep JSON body to hrt/api/state -> $c (any non-5xx is fine; the extra 'deep' field is simply dropped)"
           curl -sf "$B/healthz" >/dev/null && echo "ok   server still alive after deep JSON" || { echo "FAIL server died after deep JSON"; fail=1; }
+          # The Rack doc store keeps the raw parsed body and re-serializes it on every future
+          # save and every GET /rack/api/state — a small-but-deep body there must be rejected
+          # up front (400), not accepted and left to break every later read.
+          node -e 'const n=5000; require("fs").writeFileSync("/tmp/deep-rack.json", "[".repeat(n)+"1"+"]".repeat(n))'
+          c=$(code -b jar -X PUT "$B/rack/api/doc/attack/deep" -H 'Content-Type: application/json' --data-binary @/tmp/deep-rack.json)
+          [ "$c" = "400" ] && echo "ok   deeply nested rack doc rejected up front (400)" || { echo "FAIL deeply nested rack doc -> $c (want 400, not stored)"; fail=1; }
+          c=$(code -b jar "$B/rack/api/state")
+          [ "$c" = "200" ] && echo "ok   /rack/api/state still readable after the attempt ($c)" || { echo "FAIL /rack/api/state broken after the attempt: $c"; fail=1; }
           # Large note field, still under the body cap.
           BIGNOTE=$(head -c 1900 </dev/zero | tr '\0' 'x')
           REV=$(curl -s -b jar "$B/hrt/api/state" | sed 's/.*"rev":\([0-9]*\).*/\1/')

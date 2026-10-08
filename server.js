@@ -497,6 +497,22 @@ async function hrtApi(req, res, url, q) {
   return json(res, 404, { error: "not found" });
 }
 
+// Rack docs are stored verbatim and re-serialized (JSON.stringify) on every future save AND
+// every GET /rack/api/state. V8's JSON.stringify is recursive, so a tiny but deeply-nested
+// body (trivial to fit under the 1MB cap — "[[[[...]]]]" is 2 bytes per level) can blow its
+// call stack and 500 on every read from then on, not just the one request that stored it.
+// Reject anything too deep before it's ever stored. The walk itself uses an explicit stack,
+// not recursion, so it can't be turned into the same problem it's checking for.
+function tooDeep(v, limit = 64) {
+  const stack = [[v, 0]];
+  while (stack.length) {
+    const [node, depth] = stack.pop();
+    if (depth > limit) return true;
+    if (node && typeof node === "object") for (const k in node) stack.push([node[k], depth + 1]);
+  }
+  return false;
+}
+
 async function rackApi(req, res, url) {
   const m = req.method;
   if (url === "/rack/api/ping" && m === "GET") return json(res, 200, { app: "rack-builder", docker: !!DOCKER, prices: PRICES });
@@ -506,7 +522,7 @@ async function rackApi(req, res, url) {
     const key = url.slice("/rack/api/doc/".length);
     if (!RB_PATH_RE.test(key)) return json(res, 404, { error: "not found" });
     const doc = await readBody(req, 1_000_000);
-    if (!doc || typeof doc !== "object" || Array.isArray(doc)) return json(res, 400, { error: "bad json" });
+    if (!doc || typeof doc !== "object" || Array.isArray(doc) || tooDeep(doc)) return json(res, 400, { error: "bad json" });
     RB.docs[key] = doc; RB.ver = (RB.ver || 0) + 1; saveRb();
     return json(res, 200, { ver: RB.ver });
   }
