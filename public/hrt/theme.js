@@ -6,7 +6,7 @@
   function apply(m){
     if(m==="auto")root.removeAttribute("data-theme");else root.setAttribute("data-theme",m);
     var dark=m==="dark"||(m==="auto"&&mq.matches),t=document.querySelector('meta[name="theme-color"]');
-    if(t)t.setAttribute("content",dark?"#17131a":"#f6f3f5");
+    if(t)t.setAttribute("content",dark?"#0d0b12":"#eef9ff");
     var b=document.getElementById("theme-btn");
     if(b){b.textContent=icons[m]+" "+labels[m];b.setAttribute("aria-label","Theme: "+labels[m]+". Click to change.")}
   }
