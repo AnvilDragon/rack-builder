@@ -1,4 +1,5 @@
 # TrueNAS: Apps > Discover Apps > (three dots) > Install via YAML
+# One container runs Rack Builder (/rack/) and HRT Log (/hrt/) behind one login.
 # Change /mnt/POOL/apps/rack-builder to your dataset. Open http://<NAS IP>:30251
 services:
   rack-builder:
@@ -8,19 +9,23 @@ services:
     environment:
       - DOCKER_HOST_PROXY=socket-proxy:2375   # live per-app stats; remove with the socket-proxy service to turn off
       - LIVE_INTERVAL=1   # seconds between updates
+      - COOKIE_SECURE=0   # set to 1 if you only reach it over HTTPS (reverse proxy)
       - PRICES_TOKEN=paste-your-read-only-token-here   # weekly prices from the repo; leave as-is to turn off
     ports:
       - "30251:8080"
     volumes:
       - /mnt/POOL/apps/rack-builder:/data
     user: "568:568"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     depends_on:
       - socket-proxy
     deploy:
       resources:
         limits:
           cpus: "0.25"
-          memory: 64M
+          memory: 128M
 
   # Read-only window into Docker: lists containers and their stats only. Cannot start, stop or change anything.
   socket-proxy:
