@@ -1,0 +1,119 @@
+name: Test image
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Syntax check
+        run: |
+          for f in server.js public/*.js public/rack/*.js public/hrt/*.js; do node --check "$f"; done
+
+      - name: Sign-in form must never put credentials in the URL
+        run: grep -q "<form id=\"auth\" method=\"post\"" public/login.html
+
+      - name: Build image
+        run: docker build -t rack-builder:test .
+
+      - name: Run it like TrueNAS does (user 568, read-only, no extra permissions)
+        run: |
+          mkdir data && sudo chown 568:568 data
+          docker run -d --name rb -p 8080:8080 --user 568:568 --read-only --cap-drop ALL \
+            --security-opt no-new-privileges:true -v "$PWD/data:/data" \
+            -e SETUP_CODE=ci-setup-code -e FIRST_USER=ci-user rack-builder:test
+          for i in $(seq 1 30); do curl -sf localhost:8080/healthz && break; sleep 1; done
+          curl -sf localhost:8080/healthz
+
+      - name: Smoke test
+        run: |
+          set -eu
+          B=http://localhost:8080
+          J='Content-Type: application/json'
+          code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+          must() { if ! bash -c "$1" >/dev/null 2>&1; then echo "FAIL $2"; docker logs rb | tail -30; exit 1; fi; echo "ok   $2"; }
+          expect() { [ "$1" = "$2" ] || { echo "FAIL $3: got $1, want $2"; docker logs rb | tail -30; exit 1; }; echo "ok   $3"; }
+
+          expect "$(code $B/)" 302 "signed-out / redirects to login"
+          expect "$(code $B/rack/)" 302 "signed-out /rack/ redirects"
+          expect "$(code $B/login.html)" 200 "login page is public"
+          expect "$(code $B/manifest.webmanifest)" 200 "manifest is public"
+          expect "$(code $B/icons/icon-180.png)" 200 "icon is public"
+          expect "$(code $B/rack/api/live)" 401 "signed-out rack api blocked"
+          expect "$(code $B/hrt/api/state)" 401 "signed-out hrt api blocked"
+          expect "$(code $B/server.js)" 302 "source not served"
+
+          expect "$(code -X POST $B/api/auth/setup -H "$J" -d '{"username":"ci-user","password":"correct horse battery","code":"wrong"}')" 403 "setup rejects wrong code"
+          expect "$(code -X POST $B/api/auth/setup -H "$J" -d '{"username":"someone-else","password":"correct horse battery","code":"ci-setup-code"}')" 403 "setup rejects wrong username"
+          expect "$(code -X POST $B/api/auth/setup -H 'Content-Type: text/plain' -d 'x')" 415 "setup needs json"
+
+          curl -s -c jar -o /dev/null -w '%{http_code}\n' -X POST $B/api/auth/setup -H "$J" \
+            -d '{"username":"CI-User","password":"correct horse battery","code":"ci-setup-code"}' | grep -qx 200
+          echo "ok   setup succeeds with right username and code"
+          grep -q 'HttpOnly' jar || grep -q hrt jar
+          expect "$(code -X POST $B/api/auth/setup -H "$J" -d '{"username":"x","password":"correct horse battery","code":"ci-setup-code"}')" 409 "setup closed after first account"
+
+          expect "$(code -b jar $B/rack/)" 200 "/rack/ loads when signed in"
+          expect "$(code -b jar $B/hrt/)" 200 "/hrt/ loads when signed in"
+          expect "$(code -b jar $B/rack/rack.js)" 200 "rack.js loads"
+          expect "$(code -b jar $B/hrt/app.js)" 200 "hrt app.js loads"
+          expect "$(code -b jar $B/rack/api/ping)" 200 "rack ping"
+          expect "$(code -b jar $B/rack/api/live)" 200 "rack live"
+          expect "$(code -b jar $B/rack/api/state)" 200 "rack state"
+
+          # Rack Builder document save round trip
+          expect "$(code -b jar -X PUT $B/rack/api/doc/settings/budget -H "$J" -d '{"perCheck":70}')" 200 "rack doc save"
+          curl -s -b jar $B/rack/api/state | grep -q '"perCheck":70'
+          echo "ok   rack doc persisted"
+
+          # HRT log round trip (rev check, save, malformed save rejected, exports)
+          REV=$(curl -s -b jar $B/hrt/api/state | sed 's/.*"rev":\([0-9]*\).*/\1/')
+          expect "$(code -b jar -X PUT $B/hrt/api/state -H "$J" -d "{\"rev\":$REV}")" 400 "malformed hrt save rejected"
+          expect "$(code -b jar -X PUT $B/hrt/api/state -H "$J" -d "{\"rev\":$REV,\"state\":{\"start\":\"2026-01-01\",\"shots\":[{\"date\":\"2026-01-01\",\"ml\":0.1,\"site\":\"Thigh\"}]}}")" 200 "hrt save"
+          expect "$(code -b jar -X PUT $B/hrt/api/state -H "$J" -d "{\"rev\":$REV,\"state\":{}}")" 409 "stale hrt save rejected"
+          expect "$(code -b jar "$B/hrt/api/export?format=csv")" 200 "csv export"
+          expect "$(code -b jar "$B/hrt/api/export?format=json")" 200 "json export"
+          curl -s -b jar -o backup.db "$B/hrt/api/export?format=sqlite"
+          if [ "$(head -c 15 backup.db)" != "SQLite format 3" ]; then echo "FAIL sqlite export is not a database"; exit 1; fi; echo "ok   sqlite export is a database"
+          if grep -a -q "scrypt" backup.db; then echo "FAIL sqlite export contains the password hash"; exit 1; fi; echo "ok   sqlite export has no password hash"
+
+          # Wrong password / lockout
+          expect "$(code -X POST $B/api/auth/login -H "$J" -d '{"username":"ci-user","password":"nope-nope-nope"}')" 401 "wrong password rejected"
+
+          # Sign out ends the session
+          expect "$(code -b jar -c jar -X POST $B/api/auth/logout -H "$J" -d '{}')" 200 "logout"
+          expect "$(code -b jar $B/hrt/api/state)" 401 "session dead after logout"
+          expect "$(code -c jar2 -X POST $B/api/auth/login -H "$J" -d '{"username":"ci-user","password":"correct horse battery"}')" 200 "login works"
+          expect "$(code -b jar2 $B/hrt/)" 200 "signed in again"
+
+          # Data lives on the volume, not in the image
+          must "test -f data/hrt.db && test -f data/state.json" "data written to the mounted volume"
+
+          # Security headers and cookie flags
+          H=$(curl -sI $B/login.html)
+          printf '%s' "$H" > headers.txt; must "grep -qiE '^content-security-policy:.*script-src .self.' headers.txt" "CSP restricts scripts to same origin"
+          if echo "$H" | grep -i '^content-security-policy:' | grep -qiE 'googleapis|gstatic|https?://'; then echo "FAIL CSP allows a third-party origin"; exit 1; fi; echo "ok   CSP allows no third-party origin"
+          must "grep -qi '^x-content-type-options: nosniff' headers.txt" "nosniff"
+          must "grep -qi '^referrer-policy: no-referrer' headers.txt" "no referrer sent"
+          must "grep -qi '^x-frame-options: deny' headers.txt" "clickjacking blocked"
+          curl -si -X POST $B/api/auth/login -H "$J" -d '{"username":"ci-user","password":"correct horse battery"}' | grep -i '^set-cookie:' > cookie.txt
+          must "grep -qi HttpOnly cookie.txt && grep -qi SameSite=Strict cookie.txt" "session cookie is HttpOnly + SameSite=Strict"
+          expect "$(curl -s -o /dev/null -w '%{http_code}' -b jar2 -X POST $B/api/auth/logout -H "$J" -H 'Origin: http://evil.example' -d '{}')" 403 "cross-site POST rejected"
+          expect "$(code -b jar2 "$B/hrt/api/export?format=json")" 200 "export works when signed in"
+          expect "$(code "$B/hrt/api/export?format=json")" 401 "export blocked when signed out"
+
+          # No third-party resources in any page
+          if grep -rEn '<(link|script|img|iframe)[^>]*(src|href)=.?https?://' public --include=*.html; then echo "FAIL a page loads a third-party resource"; exit 1; fi
+          echo "ok   pages load nothing from third parties"
+
+          # Lockout: five wrong passwords lock sign-in, even for the right password
+          for i in 1 2 3 4 5; do code -X POST $B/api/auth/login -H "$J" -d '{"username":"ci-user","password":"wrong-wrong-wrong"}' > /dev/null; done
+          expect "$(code -X POST $B/api/auth/login -H "$J" -d '{"username":"ci-user","password":"correct horse battery"}')" 429 "sign-in locked after repeated failures"
+
+      - name: Container log
+        if: always()
+        run: docker logs rb || true
