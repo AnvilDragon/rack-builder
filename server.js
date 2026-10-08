@@ -326,12 +326,22 @@ const isHttps = req => SECURE_COOKIE || req.headers["x-forwarded-proto"] === "ht
 const cookie = (req, v, maxAge) => `${COOKIE}=${v}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}${isHttps(req) ? "; Secure" : ""}`;
 const authed = req => hasUser() && !!sessionHash(req);
 
-// brute-force protection: 5 failures => 15 min lock, per client IP and globally (single user)
+// Brute-force protection: 5 failed attempts from one IP locks that IP out for 15 minutes.
+// Per-IP only, never shared across clients — an earlier version also locked out everyone once
+// 20 TOTAL failures accumulated from any mix of source addresses, which an attacker with a
+// handful of LAN/VPN addresses could trivially trigger to lock out the legitimate owner too.
+//
+// reserve() is called BEFORE the expensive/async work (reading the body, hashing the password),
+// not after it fails — otherwise a burst of concurrent requests all pass the locked() check
+// before any of them finishes hashing and gets counted, letting far more than 5 real guesses
+// through per burst. Because Node runs each request's synchronous code up to its first `await`
+// before starting the next one, reserve() being synchronous and ahead of every `await` here
+// means the Nth concurrent request really does see the first N-1 reservations already counted.
 const fails = new Map();
 const ipOf = req => req.socket.remoteAddress || "?";
-function locked(keys) { const now = Date.now(); return keys.some(k => { const f = fails.get(k); return f && f.until > now; }); }
-function failed(keys) { for (const k of keys) { const f = fails.get(k) || { n: 0, until: 0 }; if (++f.n >= (k === "*" ? 20 : 5)) { f.until = Date.now() + 15 * 60e3; f.n = 0; } fails.set(k, f); } }
-const cleared = keys => keys.forEach(k => fails.delete(k));
+function locked(ip) { const f = fails.get(ip); return !!f && f.until > Date.now(); }
+function reserve(ip) { const f = fails.get(ip) || { n: 0, until: 0 }; if (++f.n >= 5) { f.until = Date.now() + 15 * 60e3; f.n = 0; } fails.set(ip, f); }
+const cleared = ip => fails.delete(ip);
 
 // =====================================================================================
 // HTTP helpers
@@ -348,13 +358,24 @@ function send(res, code, body, headers = {}) {
 const json = (res, code, obj, h) => send(res, code, JSON.stringify(obj), { "Content-Type": "application/json; charset=utf-8", ...h });
 const redirect = (res, to) => send(res, 302, "", { Location: to });
 function readBody(req, max = MAX_BODY) {
+  // A moderately oversized body is drained (not buffered) and gets a clean 413.
+  // Only a wildly oversized one — someone actually trying to flood us — cuts the
+  // connection outright, so a normal client never sees a dropped connection instead
+  // of an error it can understand.
+  const HARD_CAP = Math.max(max * 4, 2 * 1024 * 1024);
   return new Promise((resolve, reject) => {
-    let n = 0; const chunks = [];
-    req.on("data", c => { n += c.length; if (n > max) { reject(Object.assign(new Error("too large"), { code: 413 })); req.destroy(); } else chunks.push(c); });
+    let n = 0, tooLarge = false; const chunks = [];
+    req.on("data", c => {
+      n += c.length;
+      if (n > HARD_CAP) { reject(Object.assign(new Error("too large"), { code: 413 })); req.destroy(); return; }
+      if (n > max) { tooLarge = true; return; }
+      chunks.push(c);
+    });
     req.on("end", () => {
+      if (tooLarge) return reject(Object.assign(new Error("too large"), { code: 413 }));
       try {
         const v = chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
-        if (!v || typeof v !== "object") throw 0; // handlers expect an object (or array for Rack docs)
+        if (!v || typeof v !== "object" || Array.isArray(v)) throw 0; // every handler expects a plain object
         resolve(v);
       } catch { reject(Object.assign(new Error("bad json"), { code: 400 })); }
     });
@@ -406,15 +427,17 @@ async function authApi(req, res, url) {
 
   if (url === "/api/auth/setup" && m === "POST") {
     if (hasUser()) return json(res, 409, { error: "already set up" });
-    const keys = [ipOf(req), "*"];
-    if (locked(keys)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
+    const ip = ipOf(req);
+    if (locked(ip)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
+    reserve(ip); // before any async work — see the comment on reserve() above
     const b = await readBody(req), u = String(b.username || "").trim(), p = String(b.password || "");
     const codeOk = !!SETUP_CODE && sameSecret(String(b.code || "").trim().toLowerCase(), SETUP_CODE.toLowerCase());
     const nameOk = !FIRST_USER || u.toLowerCase() === FIRST_USER;
-    if (!codeOk || !nameOk) { failed(keys); return json(res, 403, { error: "Couldn't create the account. Check the setup code." }); }
+    if (!codeOk || !nameOk) return json(res, 403, { error: "Couldn't create the account. Check the setup code." });
     if (u.length < 1 || u.length > 64) return json(res, 400, { error: "Enter a username." });
     if (p.length < 10 || p.length > 256) return json(res, 400, { error: "Password must be at least 10 characters." });
     db.prepare("INSERT INTO user(id,username,pw) VALUES(1,?,?)").run(u, hashPw(p));
+    cleared(ip);
     if (!db.prepare("SELECT 1 FROM entries LIMIT 1").get() && !db.prepare("SELECT 1 FROM shots LIMIT 1").get()) {
       try { writeState(JSON.parse(fs.readFileSync(path.join(DATA_DIR, "hrt-seed.json"), "utf8"))); } catch {}
     }
@@ -422,15 +445,16 @@ async function authApi(req, res, url) {
   }
 
   if (url === "/api/auth/login" && m === "POST") {
-    const keys = [ipOf(req), "*"];
-    if (locked(keys)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
+    const ip = ipOf(req);
+    if (locked(ip)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
+    reserve(ip); // before any async work — see the comment on reserve() above
     const b = await readBody(req), u = db.prepare("SELECT username,pw FROM user WHERE id=1").get();
     // Always run the password hash so a wrong username takes as long as a wrong password.
     const nameOk = !!u && String(b.username || "").trim().toLowerCase() === u.username.toLowerCase();
     const pwOk = checkPw(String(b.password || ""), u ? u.pw : DUMMY_PW);
     const ok = nameOk && pwOk;
-    if (!ok) { failed(keys); return json(res, 401, { error: "Wrong username or password." }); }
-    cleared(keys);
+    if (!ok) return json(res, 401, { error: "Wrong username or password." });
+    cleared(ip);
     db.prepare("DELETE FROM session WHERE exp<?").run(Date.now());
     return json(res, 200, { ok: true }, { "Set-Cookie": cookie(req, newSession(), SESSION_DAYS * 86400) });
   }
@@ -443,12 +467,14 @@ async function authApi(req, res, url) {
     return json(res, 200, { ok: true }, { "Set-Cookie": cookie(req, "", 0) });
   }
   if (url === "/api/auth/password" && m === "POST") {
+    const ip = ipOf(req);
+    if (locked(ip)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
+    reserve(ip); // before any async work — see the comment on reserve() above
     const b = await readBody(req), u = db.prepare("SELECT pw FROM user WHERE id=1").get(), p = String(b.next || "");
-    const keys = [ipOf(req), "*"];
-    if (locked(keys)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
-    if (!checkPw(String(b.current || ""), u.pw)) { failed(keys); return json(res, 401, { error: "Current password is wrong." }); }
+    if (!checkPw(String(b.current || ""), u.pw)) return json(res, 401, { error: "Current password is wrong." });
     if (p.length < 10 || p.length > 256) return json(res, 400, { error: "New password must be at least 10 characters." });
     db.prepare("UPDATE user SET pw=? WHERE id=1").run(hashPw(p));
+    cleared(ip);
     db.prepare("DELETE FROM session WHERE h<>?").run(sh); // sign out other devices
     return json(res, 200, { ok: true });
   }
@@ -486,6 +512,22 @@ async function hrtApi(req, res, url, q) {
   return json(res, 404, { error: "not found" });
 }
 
+// Rack docs are stored verbatim and re-serialized (JSON.stringify) on every future save AND
+// every GET /rack/api/state. V8's JSON.stringify is recursive, so a tiny but deeply-nested
+// body (trivial to fit under the 1MB cap — "[[[[...]]]]" is 2 bytes per level) can blow its
+// call stack and 500 on every read from then on, not just the one request that stored it.
+// Reject anything too deep before it's ever stored. The walk itself uses an explicit stack,
+// not recursion, so it can't be turned into the same problem it's checking for.
+function tooDeep(v, limit = 64) {
+  const stack = [[v, 0]];
+  while (stack.length) {
+    const [node, depth] = stack.pop();
+    if (depth > limit) return true;
+    if (node && typeof node === "object") for (const k in node) stack.push([node[k], depth + 1]);
+  }
+  return false;
+}
+
 async function rackApi(req, res, url) {
   const m = req.method;
   if (url === "/rack/api/ping" && m === "GET") return json(res, 200, { app: "rack-builder", docker: !!DOCKER, prices: PRICES });
@@ -495,7 +537,7 @@ async function rackApi(req, res, url) {
     const key = url.slice("/rack/api/doc/".length);
     if (!RB_PATH_RE.test(key)) return json(res, 404, { error: "not found" });
     const doc = await readBody(req, 1_000_000);
-    if (!doc || typeof doc !== "object" || Array.isArray(doc)) return json(res, 400, { error: "bad json" });
+    if (!doc || typeof doc !== "object" || Array.isArray(doc) || tooDeep(doc)) return json(res, 400, { error: "bad json" });
     RB.docs[key] = doc; RB.ver = (RB.ver || 0) + 1; saveRb();
     return json(res, 200, { ver: RB.ver });
   }
