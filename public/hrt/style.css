@@ -1,16 +1,20 @@
 *{box-sizing:border-box}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}img{max-width:100%}[hidden]{display:none!important}
 :root{
-  --bg:#f6f3f5;--card:#ffffff;--ink:#231c22;--muted:#6f6470;--line:#e5dde3;
-  --accent:#b03a72;--accent-soft:#f6e3ec;--blue:#3f74ad;--warn:#a5650e;--warn-soft:#fbefd9;--ok:#2f7d55;
+  /* Light: trans pride (light blue / pink / white) */
+  --bg:#d6eefb;--card:#fff5fa;--ink:#24303f;--muted:#6b7a8c;--line:#f0cfe0;
+  --accent:#e8559a;--accent-soft:#fbdcec;--blue:#1f9ad6;--warn:#a5650e;--warn-soft:#fbefd9;--ok:#2f7d55;
   --display:"Fraunces",Georgia,serif;--body:"Figtree",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#17131a;--card:#211b24;--ink:#efe8ef;--muted:#a597a6;--line:#382e3b;
-  --accent:#ea7cb0;--accent-soft:#3b2232;--blue:#86afe0;--warn:#e7b05b;--warn-soft:#3a2c17;--ok:#6fcf9a;color-scheme:dark}}
+  /* Dark: latex (glossy near-black, magenta sheen) */
+  --bg:#0d0b12;--card:#17131e;--ink:#f3eef7;--muted:#8f84a3;--line:#2c2438;
+  --accent:#ff2f92;--accent-soft:#3a1830;--blue:#a78bfa;--warn:#ffb648;--warn-soft:#3a2c17;--ok:#34d399;color-scheme:dark}}
 :root[data-theme="dark"]{
-  --bg:#17131a;--card:#211b24;--ink:#efe8ef;--muted:#a597a6;--line:#382e3b;
-  --accent:#ea7cb0;--accent-soft:#3b2232;--blue:#86afe0;--warn:#e7b05b;--warn-soft:#3a2c17;--ok:#6fcf9a;color-scheme:dark}
+  --bg:#0d0b12;--card:#17131e;--ink:#f3eef7;--muted:#8f84a3;--line:#2c2438;
+  --accent:#ff2f92;--accent-soft:#3a1830;--blue:#a78bfa;--warn:#ffb648;--warn-soft:#3a2c17;--ok:#34d399;color-scheme:dark}
 body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--body)}
+:root:not([data-theme="light"]) .panel,:root[data-theme="dark"] .panel{background-image:linear-gradient(165deg,rgba(255,255,255,.05),transparent 45%)}
+@media (prefers-color-scheme:light){:root[data-theme="dark"] .panel{background-image:linear-gradient(165deg,rgba(255,255,255,.05),transparent 45%)}}
 .wrap{max-width:760px;margin:0 auto;padding:24px 16px 96px}
 h1{font:650 1.9rem/1.1 var(--display);margin:0;letter-spacing:-.01em;text-wrap:balance}
 .sub{color:var(--muted);margin:4px 0 18px}
