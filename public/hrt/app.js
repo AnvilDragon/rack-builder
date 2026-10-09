@@ -1,5 +1,13 @@
   var FIELDS=[["len","Stretched length","in",0.05],["flac","Flaccid length","in",0.05],["half","Half-erect length","in",0.05],["erect","Full erect length","in",0.05],["tL","Left testicle","mL",0.5],["tR","Right testicle","mL",0.5],["bust","Bust","in",0.125],["under","Underbust","in",0.125],["weight","Weight","lb",0.1]];
   var METRICS=[["len","Stretched length","in"],["flac","Flaccid length","in"],["half","Half-erect length","in"],["erect","Full erect length","in"],["tes","Testicle avg","mL"],["bust","Bust","in"],["diff","Bust minus underbust","in"],["weight","Weight","lb"]];
+  // Spicy labels: an opt-in, device-local word swap for measurement wording. Off by default.
+  // Never sent to the server, never stored in state, never in exports — purely how this one
+  // browser displays label text. Toggle lives in the Data tab.
+  var SPICY_MAP={len:"Clitty stretched length",flac:"Flaccid clitty length",half:"Half-erect clitty length",erect:"Full erect clitty length",
+    tL:"Left clitty nut",tR:"Right clitty nut",bust:"Tits",under:"Under-tit",tes:"Clitty nuts avg",diff:"Tits minus under-tit",
+    breast:"Tits",testicles:"Clitty nuts",helper:"Clitty nuts volume helper"};
+  function spicyOn(){try{return localStorage.getItem("hrt-spicy")==="1"}catch(e){return false}}
+  function SL(key,normal){return spicyOn()&&SPICY_MAP[key]?SPICY_MAP[key]:normal}
   var state;
   var readOnly=false,loading=false,view="boot",rev=0,msg="";
   var tab="today",day=today(),metric="len",helper={L:"",W:"",D:""};
@@ -44,17 +52,20 @@
   function cdf(z){var t=1/(1+0.2316419*Math.abs(z)),d=0.3989423*Math.exp(-z*z/2),p=d*t*(0.3193815+t*(-0.3565638+t*(1.781478+t*(-1.821256+t*1.330274))));return z>0?1-p:p}
   function ord(n){var v=n%100;return n+(v>10&&v<14?"th":["th","st","nd","rd"][n%10]||"th")}
   function penCat(p){return p<5?"Below typical range":p<25?"Smaller than average":p<=75?"Average":p<=95?"Larger than average":"Above typical range"}
+  function penCatSpicy(p){return p<5?"Micropenis":p<25?"Small clitty":p<=75?"Average clitty":p<=95?"Big clitty":"Hung"}
   function testCat(v){return v>=15?"Adult size range":v>=12?"Slightly below adult range":v>=4?"Pubertal size range":"Prepubertal size range"}
+  function testCatSpicy(v){return v>=15?"Full nuts":v>=12?"Shrinking nuts":v>=4?"Clitty nuts":"Tiny clitty nuts"}
   function classify(e){
     var rows=[];e=e||{};
     var b=num(e.bust),u=num(e.under);
     if(b!=null&&u!=null){var band=Math.max(28,Math.round(u/2)*2),d=Math.max(0,Math.round(b-u));
-      rows.push(["Breast",band+(d>=CUPS.length?"J+":CUPS[d]),"Estimated US bra size (band from underbust, cup from "+r(b-u,2)+" in difference). Brands vary."])}
+      rows.push([SL("breast","Breast"),band+(d>=CUPS.length?"J+":CUPS[d]),"Estimated US bra size (band from underbust, cup from "+r(b-u,2)+" in difference). Brands vary."])}
     [["flac","Flaccid length"],["len","Stretched length"],["erect","Erect length"]].forEach(function(k){
       var v=num(e[k[0]]);if(v==null)return;var cm=v*2.54,z=(cm-PEN[k[0]][0])/PEN[k[0]][1],p=Math.min(99,Math.max(1,Math.round(cdf(z)*100)));
-      rows.push([k[1],r(v,2)+" in ("+r(cm,1)+" cm)",ord(p)+" percentile, "+penCat(p).toLowerCase()])});
+      var cat=spicyOn()?penCatSpicy(p):penCat(p);
+      rows.push([SL(k[0],k[1]),r(v,2)+" in ("+r(cm,1)+" cm)",ord(p)+" percentile, "+cat.toLowerCase()])});
     var t=val(e,"tes");
-    if(t!=null)rows.push(["Testicles","avg "+r(t,1)+" mL",testCat(t)+(num(e.tL)!=null&&num(e.tR)!=null?" (L "+r(num(e.tL),1)+", R "+r(num(e.tR),1)+" mL)":"")]);
+    if(t!=null)rows.push([SL("testicles","Testicles"),"avg "+r(t,1)+" mL",(spicyOn()?testCatSpicy(t):testCat(t))+(num(e.tL)!=null&&num(e.tR)!=null?" (L "+r(num(e.tL),1)+", R "+r(num(e.tR),1)+" mL)":"")]);
     return rows;
   }
   function classHtml(e){
@@ -99,10 +110,10 @@
     var e=entry(day)||{},dis=readOnly||loading?" disabled":"";
     var L=num(helper.L),W=num(helper.W),D=num(helper.D),vol=L&&W?0.52*L*W*(D||W):null;
     return '<section class="panel"><div class="grid"><label class="f">Date<input type="date" id="day" value="'+esc(day)+'" max="'+today()+'"></label><label class="f">Time measured<input type="time" id="e-time" data-e="time" value="'+esc(e.time||"")+'"'+dis+'></label></div>'+
-      '<div class="grid">'+FIELDS.map(function(f){return '<label class="f">'+f[1]+' <span class="unit">'+f[2]+'</span><input type="number" inputmode="decimal" step="'+f[3]+'" min="0" id="e-'+f[0]+'" data-e="'+f[0]+'" value="'+esc(e[f[0]]==null?"":e[f[0]])+'"'+dis+'></label>'}).join("")+'</div>'+
+      '<div class="grid">'+FIELDS.map(function(f){return '<label class="f">'+SL(f[0],f[1])+' <span class="unit">'+f[2]+'</span><input type="number" inputmode="decimal" step="'+f[3]+'" min="0" id="e-'+f[0]+'" data-e="'+f[0]+'" value="'+esc(e[f[0]]==null?"":e[f[0]])+'"'+dis+'></label>'}).join("")+'</div>'+
       '<label class="f">Notes<textarea id="e-note" data-e="note" placeholder="Tenderness, mood, sleep, anything unusual"'+dis+'>'+esc(e.note||"")+'</textarea></label>'+
       '<div class="helper" id="cls">'+classHtml(e)+'</div>'+
-      '<div class="helper"><h2>Testicle volume helper</h2><p>Measure through the skin with a soft tape or calipers, in centimeters: length (top to bottom), width (side to side) and depth (front to back). Volume = 0.52 × L × W × D. Leave depth blank to use width twice.</p>'+
+      '<div class="helper"><h2>'+SL("helper","Testicle volume helper")+'</h2><p>Measure through the skin with a soft tape or calipers, in centimeters: length (top to bottom), width (side to side) and depth (front to back). Volume = 0.52 × L × W × D. Leave depth blank to use width twice.</p>'+
       '<div class="row3"><label class="f">Length <span class="unit">cm</span><input type="number" step="0.1" min="0" id="h-L" data-hp="L" value="'+esc(helper.L)+'"></label><label class="f">Width <span class="unit">cm</span><input type="number" step="0.1" min="0" id="h-W" data-hp="W" value="'+esc(helper.W)+'"></label><label class="f">Depth <span class="unit">cm</span><input type="number" step="0.1" min="0" id="h-D" data-hp="D" value="'+esc(helper.D)+'"></label></div>'+
       '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span class="vol" id="vol">'+(vol?r(vol,1)+" mL":"- mL")+'</span><button class="btn sm" data-act="useL"'+(vol&&!readOnly&&!loading?"":" disabled")+'>Use for left</button><button class="btn sm" data-act="useR"'+(vol&&!readOnly&&!loading?"":" disabled")+'>Use for right</button></div></div>'+
       '<p class="note">Measure at the same time each day, before a shower, warm and relaxed. Daily numbers bounce around; the Trends tab smooths them with a 7-day average.</p></section>';
@@ -111,8 +122,8 @@
   function chart(){
     var pts=[];state.entries.forEach(function(e){var v=val(e,metric);if(v!=null)pts.push([dn(e.date),v])});
     var m=METRICS.filter(function(x){return x[0]===metric})[0];
-    var chips='<div class="chips">'+METRICS.map(function(x){return '<button class="chip" data-metric="'+x[0]+'" aria-pressed="'+(x[0]===metric)+'">'+x[1]+'</button>'}).join("")+'</div>';
-    if(pts.length<2)return '<section class="panel">'+chips+'<p class="empty">Log '+m[1].toLowerCase()+' on at least two days to see a trend line here. The 7-day average starts working after your first week.</p></section>';
+    var chips='<div class="chips">'+METRICS.map(function(x){return '<button class="chip" data-metric="'+x[0]+'" aria-pressed="'+(x[0]===metric)+'">'+SL(x[0],x[1])+'</button>'}).join("")+'</div>';
+    if(pts.length<2)return '<section class="panel">'+chips+'<p class="empty">Log '+SL(m[0],m[1]).toLowerCase()+' on at least two days to see a trend line here. The 7-day average starts working after your first week.</p></section>';
     var W=640,H=260,pl=46,pr=14,pt=14,pb=34;
     var x0=pts[0][0],x1=pts[pts.length-1][0];if(x1===x0)x1=x0+1;
     var lo=Infinity,hi=-Infinity;pts.forEach(function(p){lo=Math.min(lo,p[1]);hi=Math.max(hi,p[1])});
@@ -125,7 +136,7 @@
     var dots=pts.map(function(p){return '<circle cx="'+X(p[0])+'" cy="'+Y(p[1])+'" r="2.6" fill="var(--muted)" opacity=".7"/>'}).join("");
     var path=avg.map(function(p,i){return(i?"L":"M")+X(p[0]).toFixed(1)+" "+Y(p[1]).toFixed(1)}).join(" ");
     var lastA=avg[avg.length-1],first=avg[0];
-    var svg='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(m[1])+' over time">'+g+shots+dots+'<path d="'+path+'" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/><circle cx="'+X(lastA[0])+'" cy="'+Y(lastA[1])+'" r="4.5" fill="var(--accent)"/>'+ticks+'</svg>';
+    var svg='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(SL(m[0],m[1]))+' over time">'+g+shots+dots+'<path d="'+path+'" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/><circle cx="'+X(lastA[0])+'" cy="'+Y(lastA[1])+'" r="4.5" fill="var(--accent)"/>'+ticks+'</svg>';
     var ch=lastA[1]-first[1];
     return '<section class="panel">'+chips+'<div class="tbl">'+svg+'</div><div class="legend"><span><i style="background:var(--accent)"></i>7-day average</span><span><i style="background:var(--muted)"></i>Daily value</span><span><i style="background:var(--blue)"></i>Shot day</span></div>'+
       '<p class="note">7-day average now '+r(lastA[1])+' '+m[2]+', '+(ch>=0?"up ":"down ")+r(Math.abs(ch))+' '+m[2]+' since '+fmt(ds(first[0]))+'.</p></section>';
@@ -152,7 +163,7 @@
   function historyPanel(){
     if(!state.entries.length)return '<section class="panel"><p class="empty">Your daily entries will be listed here once you log one on the Today tab.</p></section>';
     var rows=state.entries.slice().reverse().map(function(e){return '<tr class="click" data-day="'+esc(e.date)+'"><td>'+fmt(e.date)+(e.time?' <span class="unit">'+esc(e.time)+'</span>':'')+'</td>'+FIELDS.map(function(f){return '<td>'+esc(e[f[0]]==null?"":e[f[0]])+'</td>'}).join("")+'</tr>'}).join("");
-    return '<section class="panel"><h2>History</h2><p class="note">Tap a day to edit it.</p><div class="tbl"><table><thead><tr><th>Date</th>'+FIELDS.map(function(f){return '<th>'+f[1].replace(" length","")+'</th>'}).join("")+'</tr></thead><tbody>'+rows+'</tbody></table></div></section>';
+    return '<section class="panel"><h2>History</h2><p class="note">Tap a day to edit it.</p><div class="tbl"><table><thead><tr><th>Date</th>'+FIELDS.map(function(f){return '<th>'+SL(f[0],f[1]).replace(" length","")+'</th>'}).join("")+'</tr></thead><tbody>'+rows+'</tbody></table></div></section>';
   }
 
   var confirmDel=null;
@@ -181,6 +192,7 @@
   root.addEventListener("change",function(ev){var t=ev.target;if((t.dataset.s!=null||t.dataset.l!=null)&&t.dataset.k==="date"){sortAll();render()}});
   root.addEventListener("click",function(ev){
     var b=ev.target.closest("button,tr.click");if(!b)return;
+    if(b.id==="spicy-toggle"){try{localStorage.setItem("hrt-spicy",spicyOn()?"0":"1")}catch(e){}render();return}
     if(b.dataset.tab){tab=b.dataset.tab;confirmDel=null;try{localStorage.setItem("hrt-tab",tab)}catch(e){}render();return}
     if(b.dataset.metric){metric=b.dataset.metric;render();return}
     if(b.dataset.day){day=b.dataset.day;tab="today";render();return}
@@ -224,6 +236,7 @@
       '<div class="chips"><a class="btn" href="api/export?format=json" download>JSON</a><a class="btn" href="api/export?format=csv" download>CSV</a><a class="btn" href="api/export?format=sqlite" download>Database (.db)</a></div></section>'+
       '<section class="panel" style="margin-top:12px"><h2>Import</h2><p class="note">Restore from a JSON export. This replaces everything currently in the log.</p>'+
       '<input type="file" id="imp" accept="application/json,.json"'+(dirty()?" disabled":"")+'>'+(dirty()?'<p class="note">Save or discard your changes first.</p>':'')+'</section>'+
+      '<section class="panel" style="margin-top:12px"><h2>Display</h2><button type="button" class="btn'+(spicyOn()?" primary":"")+'" id="spicy-toggle">'+(spicyOn()?"Stop degrading me":"Yes, please degrade me")+'</button><p class="note">Crude wording for measurements, only on this device, off by default.</p></section>'+
       '<section class="panel" style="margin-top:12px"><h2>Account</h2><form id="pw" style="display:grid;gap:12px" autocomplete="off"><div class="grid">'+
       '<label class="f">Current password<input type="password" id="pw-c" autocomplete="current-password" required></label>'+
       '<label class="f">New password <span class="unit">10+ characters</span><input type="password" id="pw-n" autocomplete="new-password" minlength="10" required></label></div>'+
