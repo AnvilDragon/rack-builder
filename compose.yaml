@@ -57,15 +57,17 @@ services:
   # certificates it issues, survive restarts) as long as /data below stays around — losing
   # it means a new CA, and a new browser trust prompt on every device.
   #
-  # /root.crt serves that internal CA's own root certificate (public info by design — a CA
-  # cert is meant to be distributed, nothing like a private key) so you can install it as a
-  # trusted profile on a phone. Without that, the phone only trusts the cert inside the
-  # interactive Safari tab you clicked through — background fetches a home-screen web app
+  # /root.mobileconfig: serving the bare CA certificate (even with the right MIME type)
+  # downloads fine on iOS but fails to install with "Invalid Profile" - confirmed live.
+  # iOS's fully-supported path is a proper Apple Configuration Profile: an XML plist with
+  # specific required keys (PayloadType, PayloadUUID, etc.) wrapping the certificate as
+  # base64 DER, served as application/x-apple-aspen-config. A CA's root certificate is
+  # public info by design (nothing like a private key), so serving it with no auth is fine.
+  # Without installing it as a trusted profile, the phone only trusts the cert inside the
+  # interactive Safari tab you clicked through - background fetches a home-screen web app
   # makes (including its own icon) hit the same untrusted cert outside that exception and
   # fail silently, which is why a PWA added to the home screen can show a broken icon or
-  # stop working even though the page loads fine in the browser. The explicit Content-Type
-  # is required — iOS downloads the file fine without it but refuses to install it as a
-  # profile ("Invalid Profile"); it only recognizes application/x-x509-ca-cert specifically.
+  # stop working even though the page loads fine in the browser.
   https-proxy:
     image: caddy:2-alpine
     container_name: rack-builder-https
@@ -77,11 +79,61 @@ services:
     # (TrueNAS's "Install via YAML" doesn't run this through real docker-compose — it
     # translates into Kubernetes resources, and that layer may not respect shell quoting).
     # A YAML list removes all ambiguity: each argv element is explicit no matter what
-    # processes this file.
+    # processes this file. The script itself (this one list item) was tested end to end
+    # locally first: generated a test cert, ran it through this exact logic, and confirmed
+    # the embedded base64 data decodes back to a valid certificate and the XML is well-formed.
     command:
       - sh
       - -c
-      - printf '%s\n' '{' '  debug' '}' ':8443 {' '  tls internal {' '    on_demand' '  }' '  handle /root.crt {' '    header Content-Type application/x-x509-ca-cert' '    root * /data/pki/authorities/local' '    file_server' '  }' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+      - |
+        (
+          apk add --no-cache openssl >/dev/null 2>&1
+          while [ ! -s /data/pki/authorities/local/root.crt ]; do sleep 1; done
+          DER=$(openssl x509 -in /data/pki/authorities/local/root.crt -outform der | base64 -w0)
+          UUID1=$(cat /proc/sys/kernel/random/uuid)
+          UUID2=$(cat /proc/sys/kernel/random/uuid)
+          cat > /data/root.mobileconfig <<PROFILE
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+        <key>PayloadContent</key>
+        <array>
+        <dict>
+        <key>PayloadCertificateFileName</key>
+        <string>root.cer</string>
+        <key>PayloadContent</key>
+        <data>$DER</data>
+        <key>PayloadDescription</key>
+        <string>Adds a trusted CA root certificate for Rack Builder / HRT Log</string>
+        <key>PayloadDisplayName</key>
+        <string>Rack Builder Local CA</string>
+        <key>PayloadIdentifier</key>
+        <string>com.apple.security.root.$UUID1</string>
+        <key>PayloadType</key>
+        <string>com.apple.security.root</string>
+        <key>PayloadUUID</key>
+        <string>$UUID1</string>
+        <key>PayloadVersion</key>
+        <integer>1</integer>
+        </dict>
+        </array>
+        <key>PayloadDisplayName</key>
+        <string>Rack Builder Local CA</string>
+        <key>PayloadIdentifier</key>
+        <string>com.rackbuilder.localca</string>
+        <key>PayloadUUID</key>
+        <string>$UUID2</string>
+        <key>PayloadType</key>
+        <string>Configuration</string>
+        <key>PayloadVersion</key>
+        <integer>1</integer>
+        </dict>
+        </plist>
+        PROFILE
+        ) &
+        printf '%s\n' '{' '  debug' '}' ':8443 {' '  tls internal {' '    on_demand' '  }' '  handle /root.mobileconfig {' '    header Content-Type application/x-apple-aspen-config' '    root * /data' '    file_server' '  }' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile
+        exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     ports:
       - "30252:8443"
     volumes:
