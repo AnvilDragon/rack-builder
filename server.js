@@ -58,7 +58,11 @@ const pos = v => { const n = typeof v === "number" ? v : parseFloat(v); return i
 function clean(s) {
   s = s && typeof s === "object" ? s : {};
   const tp = Array.isArray(s.targetPeak) && pos(s.targetPeak[0]) != null && pos(s.targetPeak[1]) != null ? [pos(s.targetPeak[0]), pos(s.targetPeak[1])] : [380, 440];
-  const o = { start: okDate(s.start) ? s.start : "", conc: pos(s.conc) || 40, shotEvery: pos(s.shotEvery) || 7, targetPeak: tp, entries: [], shots: [], labs: [] };
+  const o = { start: okDate(s.start) ? s.start : "", conc: pos(s.conc) || 40, shotEvery: pos(s.shotEvery) || 7, targetPeak: tp, targets: {}, entries: [], shots: [], labs: [] };
+  // Per-metric target lines on Trends charts, e.g. { whr: 0.8 }. Keys aren't restricted to
+  // known metrics, so renaming or dropping a metric just leaves its target unused, not invalid.
+  const targetsRaw = s.targets && typeof s.targets === "object" && !Array.isArray(s.targets) ? s.targets : {};
+  for (const k of Object.keys(targetsRaw)) { const n = pos(targetsRaw[k]); if (n != null && k.length <= 32) o.targets[k] = n; }
   const seen = new Set();
   for (const e of Array.isArray(s.entries) ? s.entries : []) {
     if (!e || !okDate(e.date) || seen.has(e.date)) continue;
@@ -97,7 +101,7 @@ function readState() {
     const x = { date: r.date }; if (r.e2 != null) x.e2 = r.e2; if (r.t != null) x.t = r.t; x.done = !!r.done; return x;
   });
   const m = getSetting("meta") || {};
-  return clean({ start: m.start, conc: m.conc, shotEvery: m.shotEvery, targetPeak: m.targetPeak, entries, shots, labs });
+  return clean({ start: m.start, conc: m.conc, shotEvery: m.shotEvery, targetPeak: m.targetPeak, targets: m.targets, entries, shots, labs });
 }
 function writeState(raw) {
   const s = clean(raw);
@@ -110,7 +114,7 @@ function writeState(raw) {
     for (const x of s.shots) is.run(x.date, x.ml, x.site);
     const il = db.prepare("INSERT INTO labs(date,e2,t,done) VALUES(?,?,?,?)");
     for (const x of s.labs) il.run(x.date, x.e2 ?? null, x.t ?? null, x.done ? 1 : 0);
-    setSetting("meta", { start: s.start, conc: s.conc, shotEvery: s.shotEvery, targetPeak: s.targetPeak });
+    setSetting("meta", { start: s.start, conc: s.conc, shotEvery: s.shotEvery, targetPeak: s.targetPeak, targets: s.targets });
     const rev = getRev() + 1; setSetting("rev", rev);
     db.exec("COMMIT");
     return rev;
