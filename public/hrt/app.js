@@ -1,13 +1,13 @@
   var FIELDS=[["len","Stretched length","in",0.05],["flac","Flaccid length","in",0.05],["half","Half-erect length","in",0.05],["erect","Full erect length","in",0.05],["girth","Soft girth","in",0.05],["base","Soft base girth","in",0.05],["ring","Ring circumference","in",0.05],["tL","Left testicle","mL",0.5],["tR","Right testicle","mL",0.5],["bust","Bust","in",0.125],["under","Underbust","in",0.125],["weight","Weight","lb",0.1],["waist","Waist","in",0.125],["hips","Hips","in",0.125]];
   var MOODS=["Rough","Low","Okay","Good","Great"];
-  var METRICS=[["len","Stretched length","in"],["flac","Flaccid length","in"],["half","Half-erect length","in"],["erect","Full erect length","in"],["girth","Soft girth","in"],["base","Soft base girth","in"],["ring","Ring circumference","in"],["tes","Testicle avg","mL"],["bust","Bust","in"],["diff","Bust minus underbust","in"],["weight","Weight","lb"],["waist","Waist","in"],["hips","Hips","in"],["whr","Waist-to-hip ratio",""],["mood","Mood","/ 5"],["sting","Pee stinging","times"],["rand","Random erections","times"],["arou","Aroused erections","times"],["orgasm","Orgasms","times"],["libido","Libido","/ 5"],["energy","Energy","/ 5"],["dysphoria","Dysphoria","/ 5"],["skin","Skin softness","/ 5"],["hair","Hair growth","/ 5"]];
+  var METRICS=[["len","Stretched length","in"],["flac","Flaccid length","in"],["half","Half-erect length","in"],["erect","Full erect length","in"],["girth","Soft girth","in"],["base","Soft base girth","in"],["ring","Ring circumference","in"],["tes","Testicle avg","mL"],["bust","Bust","in"],["diff","Bust minus underbust","in"],["weight","Weight","lb"],["waist","Waist","in"],["hips","Hips","in"],["whr","Waist-to-hip ratio",""],["mood","Mood","/ 5"],["sting","Pee stinging","times"],["rand","Random erections","times"],["arou","Aroused erections","times"],["orgasm","Orgasms","times"],["libido","Libido","/ 5"],["energy","Energy","/ 5"],["dysphoria","Dysphoria","/ 5"],["skin","Skin softness","/ 5"],["hair","Hair growth","/ 5"],["skincare","Skincare routine",""]];
   // Spicy labels: an opt-in, device-local word swap for measurement wording. Off by default.
   // Never sent to the server, never stored in state, never in exports — purely how this one
   // browser displays label text. Toggle lives in the Data tab.
   var SPICY_MAP={len:"Clitty stretched length",flac:"Flaccid clitty length",half:"Half-erect clitty length",erect:"Full erect clitty length",girth:"Soft clitty girth",base:"Soft clitty base girth",ring:"Clitty ring girth",
     tL:"Left clitty nut",tR:"Right clitty nut",bust:"Udders",under:"Under-udder",tes:"Clitty nuts avg",diff:"Udders minus under-udder",
     breast:"Udders",testicles:"Clitty nuts",helper:"Clitty nuts volume helper",
-    rand:"Clitty throbs, no touching",arou:"Clitty throbs, horny",libido:"Clitty hunger",orgasm:"Good pet came today",comfort:"How good girl's orgasm felt",dht:"Good girl's DHT pill, taken",tender:"Udder soreness",skin:"Girl-skin softness",hair:"Fur shedding"};
+    rand:"Clitty throbs, no touching",arou:"Clitty throbs, horny",libido:"Clitty hunger",orgasm:"Good pet came today",comfort:"How good girl's orgasm felt",dht:"Good girl's DHT pill, taken",tender:"Udder soreness",skin:"Girl-skin softness",hair:"Fur shedding",skincare:"Good girl's skincare done"};
   function spicyOn(){try{return localStorage.getItem("hrt-spicy")==="1"}catch(e){return false}}
   function SL(key,normal){return spicyOn()&&SPICY_MAP[key]?SPICY_MAP[key]:normal}
   var state;
@@ -26,7 +26,7 @@
   function r(n,d){if(n==null||!isFinite(n))return "";var s=(+n).toFixed(d==null?2:d);return s.indexOf(".")<0?s:s.replace(/0+$/,"").replace(/\.$/,"")}
   var DRE=/^\d{4}-\d{2}-\d{2}$/,TRE=/^\d{2}:\d{2}$/,SITES=["Thigh L","Thigh R","Thigh","Belly","Glute","Arm"];
   // Whole-number daily checks, each [low, high] inclusive. Booleans are stored as 0/1.
-  var CHECKS={mood:[1,5],sting:[0,99],rand:[0,99],arou:[0,99],orgasm:[0,99],libido:[1,5],energy:[1,5],dysphoria:[1,5],skin:[1,5],hair:[1,5],dht:[0,1],anchor:[0,1]};
+  var CHECKS={mood:[1,5],sting:[0,99],rand:[0,99],arou:[0,99],orgasm:[0,99],libido:[1,5],energy:[1,5],dysphoria:[1,5],skin:[1,5],hair:[1,5],dht:[0,1],anchor:[0,1],skincare:[0,1]};
   var TENDER=["None","Left","Right","Both"],COMFORT=["Fine","Uncomfortable","Painful"],ENUMS={tender:TENDER,comfort:COMFORT};
   function okDate(s){return typeof s==="string"&&DRE.test(s)&&isFinite(dn(s))}
   function pos(v){var n=num(v);return n!=null&&n>=0&&n<100000?n:null}
@@ -136,6 +136,7 @@
       numChips("dysphoria","Dysphoria",e.dysphoria,dis)+
       numChips("skin",SL("skin","Skin softness"),e.skin,dis)+
       numChips("hair",SL("hair","Hair growth"),e.hair,dis)+
+      boolChip("skincare",SL("skincare","Skincare routine done today"),e.skincare,dis)+
       boolChip("dht",SL("dht","DHT blocker taken today"),e.dht,dis)+
       counterRow("orgasm",SL("orgasm","Orgasms today"),e.orgasm,dis)+
       (e.orgasm>0?enumChips("comfort",SL("comfort","Comfort"),COMFORT,e.comfort,dis):"")+
@@ -190,8 +191,8 @@
       (rows?'<div class="tbl"><table><thead><tr><th>Date</th><th>Estradiol</th><th>Testosterone</th><th>Timing</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p class="empty">No labs yet. Your next draw is expected around early January.</p>')+'</section>';
   }
 
-  var EXTRA=[["mood","Mood"],["sting","Stinging"],["rand","Random"],["arou","Aroused"],["libido","Libido"],["energy","Energy"],["dysphoria","Dysphoria"],["tender","Tenderness"],["dht","DHT blocker"],["orgasm","Orgasm"],["comfort","Comfort"],["skin","Skin"],["hair","Hair"],["anchor","Anchor"]];
-  var BOOLS=["dht","anchor"];
+  var EXTRA=[["mood","Mood"],["sting","Stinging"],["rand","Random"],["arou","Aroused"],["libido","Libido"],["energy","Energy"],["dysphoria","Dysphoria"],["tender","Tenderness"],["skincare","Skincare"],["dht","DHT blocker"],["orgasm","Orgasm"],["comfort","Comfort"],["skin","Skin"],["hair","Hair"],["anchor","Anchor"]];
+  var BOOLS=["dht","anchor","skincare"];
   function historyPanel(){
     if(!state.entries.length)return '<section class="panel"><p class="empty">Your daily entries will be listed here once you log one on the Today tab.</p></section>';
     var rows=state.entries.slice().reverse().map(function(e){return '<tr class="click" data-day="'+esc(e.date)+'"><td>'+fmt(e.date)+(e.time?' <span class="unit">'+esc(e.time)+'</span>':'')+'</td>'+FIELDS.map(function(f){return '<td>'+esc(e[f[0]]==null?"":e[f[0]])+'</td>'}).join("")+EXTRA.map(function(x){var v=e[x[0]];return '<td>'+(v==null?"":BOOLS.indexOf(x[0])>=0?(v===1?"Yes":"No"):esc(v))+'</td>'}).join("")+'<td>'+esc(daysAfter(e.date)==null?"":daysAfter(e.date))+'</td></tr>'}).join("");

@@ -42,7 +42,7 @@ const FIELDS = ["len", "flac", "half", "erect", "girth", "base", "ring", "tL", "
 const CHECKS = {
   mood: [1, 5], sting: [0, 99], rand: [0, 99], arou: [0, 99], orgasm: [0, 99],
   libido: [1, 5], energy: [1, 5], dysphoria: [1, 5], skin: [1, 5], hair: [1, 5],
-  dht: [0, 1], anchor: [0, 1],
+  dht: [0, 1], anchor: [0, 1], skincare: [0, 1],
 };
 const TENDER = ["None", "Left", "Right", "Both"];
 const COMFORT = ["Fine", "Uncomfortable", "Painful"];
