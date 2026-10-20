@@ -5,9 +5,9 @@
   // Never sent to the server, never stored in state, never in exports — purely how this one
   // browser displays label text. Toggle lives in the Data tab.
   var SPICY_MAP={len:"Clitty stretched length",flac:"Flaccid clitty length",half:"Half-erect clitty length",erect:"Full erect clitty length",girth:"Soft clitty girth",base:"Soft clitty base girth",ring:"Clitty ring girth",
-    tL:"Left clitty nut",tR:"Right clitty nut",bust:"Tits",under:"Under-tit",tes:"Clitty nuts avg",diff:"Tits minus under-tit",
-    breast:"Tits",testicles:"Clitty nuts",helper:"Clitty nuts volume helper",
-    rand:"Clitty throbs, no touching",arou:"Clitty throbs, horny",libido:"Clitty hunger",orgasm:"Clitty finish",comfort:"Clitty finish feel",dht:"Clitty shrinker taken",tender:"Tit soreness",skin:"Girl-skin softness",hair:"Fur shedding"};
+    tL:"Left clitty nut",tR:"Right clitty nut",bust:"Udders",under:"Under-udder",tes:"Clitty nuts avg",diff:"Udders minus under-udder",
+    breast:"Udders",testicles:"Clitty nuts",helper:"Clitty nuts volume helper",
+    rand:"Clitty throbs, no touching",arou:"Clitty throbs, horny",libido:"Clitty hunger",orgasm:"Good pet came today",comfort:"How pet's orgasm felt",dht:"Good pet's DHT pill, taken",tender:"Udder soreness",skin:"Girl-skin softness",hair:"Fur shedding"};
   function spicyOn(){try{return localStorage.getItem("hrt-spicy")==="1"}catch(e){return false}}
   function SL(key,normal){return spicyOn()&&SPICY_MAP[key]?SPICY_MAP[key]:normal}
   var state;
