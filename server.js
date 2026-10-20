@@ -40,9 +40,9 @@ CREATE INDEX IF NOT EXISTS labs_date ON labs(date);
 const FIELDS = ["len", "flac", "half", "erect", "girth", "base", "ring", "tL", "tR", "bust", "under", "weight", "waist", "hips"];
 // Whole-number daily checks, each [low, high] inclusive. Booleans are stored as 0/1.
 const CHECKS = {
-  mood: [1, 5], sting: [0, 99], rand: [0, 99], arou: [0, 99],
+  mood: [1, 5], sting: [0, 99], rand: [0, 99], arou: [0, 99], orgasm: [0, 99],
   libido: [1, 5], energy: [1, 5], dysphoria: [1, 5], skin: [1, 5], hair: [1, 5],
-  dht: [0, 1], orgasm: [0, 1], anchor: [0, 1],
+  dht: [0, 1], anchor: [0, 1],
 };
 const TENDER = ["None", "Left", "Right", "Both"];
 const COMFORT = ["Fine", "Uncomfortable", "Painful"];
