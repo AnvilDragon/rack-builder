@@ -47,14 +47,25 @@ services:
           cpus: "0.25"
           memory: 128M
 
-  # Self-signed HTTPS for the LAN. "caddy reverse-proxy --from https://..." turned out to
-  # NOT reliably force TLS on a bare ":8443" address with no hostname — its automatic-HTTPS
-  # inference still left it serving plain HTTP ("HTTP/2 skipped because it requires TLS" in
-  # its own logs, even with the scheme spelled out). Writing a real Caddyfile with an
-  # explicit "tls internal" sidesteps that inference entirely: it's Caddy's standard,
-  # unambiguous way to force the internal self-signed issuer regardless of the address
-  # format. Caddy keeps its local CA (so the cert survives restarts) as long as /data below
-  # stays around — losing it means a new CA, and a new browser trust prompt on every device.
+  # Self-signed HTTPS for the LAN, reached by raw IP (no hostname, so no SNI). A bare
+  # "tls internal" with no "on_demand" never actually issues a certificate for a site with
+  # no declared hostname — confirmed via debug logging: "no certificate matching TLS
+  # ClientHello", "on_demand":false. "on_demand" scoped inside this site's own tls block
+  # tells Caddy to issue a cert from the internal CA reactively, per connection, regardless
+  # of what identity (or lack of SNI) the client presents — the right fit for "anyone on the
+  # LAN, connecting by IP, no DNS." Caddy keeps its local CA (so the cert, and the
+  # certificates it issues, survive restarts) as long as /data below stays around — losing
+  # it means a new CA, and a new browser trust prompt on every device.
+  #
+  # /root.crt serves that internal CA's own root certificate (public info by design — a CA
+  # cert is meant to be distributed, nothing like a private key) so you can install it as a
+  # trusted profile on a phone. Without that, the phone only trusts the cert inside the
+  # interactive Safari tab you clicked through — background fetches a home-screen web app
+  # makes (including its own icon) hit the same untrusted cert outside that exception and
+  # fail silently, which is why a PWA added to the home screen can show a broken icon or
+  # stop working even though the page loads fine in the browser. The explicit Content-Type
+  # is required — iOS downloads the file fine without it but refuses to install it as a
+  # profile ("Invalid Profile"); it only recognizes application/x-x509-ca-cert specifically.
   https-proxy:
     image: caddy:2-alpine
     container_name: rack-builder-https
@@ -70,7 +81,7 @@ services:
     command:
       - sh
       - -c
-      - printf '%s\n' ':8443 {' '  tls internal' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+      - printf '%s\n' '{' '  debug' '}' ':8443 {' '  tls internal {' '    on_demand' '  }' '  handle /root.crt {' '    header Content-Type application/x-x509-ca-cert' '    root * /data/pki/authorities/local' '    file_server' '  }' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     ports:
       - "30252:8443"
     volumes:
