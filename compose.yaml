@@ -25,6 +25,12 @@ services:
                            # than second-by-second graphs.
       - COOKIE_SECURE=0   # set to 1 if you only reach it over HTTPS (reverse proxy)
       - PRICES_TOKEN=paste-your-read-only-token-here   # weekly prices from the repo; leave as-is to turn off
+      - VAPID_CONTACT=mailto:your-real-address@example.com   # shot-day push notifications: Safari/iOS
+                                                               # specifically checks this is a real, reachable
+                                                               # contact and rejects a placeholder outright
+                                                               # (403 BadJwtToken) - Firefox/Chrome don't care.
+                                                               # Put a mailto: or https: contact you actually
+                                                               # control here, or Safari/iOS reminders won't work.
     ports:
       - "30251:8080"
     volumes:
