@@ -38,12 +38,19 @@ CREATE INDEX IF NOT EXISTS labs_date ON labs(date);
 // HRT Log: validation, data access
 // =====================================================================================
 const FIELDS = ["len", "flac", "half", "erect", "girth", "base", "ring", "tL", "tR", "bust", "under", "weight", "waist", "hips"];
-// Whole-number daily checks: mood 1-5, pee stinging count 0-99.
-const CHECKS = { mood: [1, 5], sting: [0, 99] };
-const COLS = [...FIELDS, ...Object.keys(CHECKS)];
+// Whole-number daily checks, each [low, high] inclusive. Booleans are stored as 0/1.
+const CHECKS = {
+  mood: [1, 5], sting: [0, 99], rand: [0, 99], arou: [0, 99],
+  libido: [1, 5], energy: [1, 5], dysphoria: [1, 5], skin: [1, 5], hair: [1, 5],
+  dht: [0, 1], orgasm: [0, 1], anchor: [0, 1],
+};
+const TENDER = ["None", "Left", "Right", "Both"];
+const COMFORT = ["Fine", "Uncomfortable", "Painful"];
+const ENUMS = { tender: TENDER, comfort: COMFORT };
+const COLS = [...FIELDS, ...Object.keys(CHECKS), ...Object.keys(ENUMS)];
 // Add any columns an older database is missing.
 { const have = new Set(db.prepare("PRAGMA table_info(entries)").all().map(c => c.name));
-  for (const c of COLS) if (!have.has(c)) db.exec(`ALTER TABLE entries ADD COLUMN ${c} ${c in CHECKS ? "INTEGER" : "REAL"}`); }
+  for (const c of COLS) if (!have.has(c)) db.exec(`ALTER TABLE entries ADD COLUMN ${c} ${c in CHECKS ? "INTEGER" : c in ENUMS ? "TEXT" : "REAL"}`); }
 const SITES = ["Thigh L", "Thigh R", "Thigh", "Belly", "Glute", "Arm"];
 const DRE = /^\d{4}-\d{2}-\d{2}$/, TRE = /^\d{2}:\d{2}$/;
 const okDate = s => typeof s === "string" && DRE.test(s) && isFinite(Date.parse(s + "T00:00:00Z"));
@@ -59,6 +66,7 @@ function clean(s) {
     const x = { date: e.date };
     for (const f of FIELDS) { const n = pos(e[f]); if (n != null) x[f] = n; }
     for (const [f, [lo, hi]] of Object.entries(CHECKS)) { const n = pos(e[f]); if (n != null && Number.isInteger(n) && n >= lo && n <= hi) x[f] = n; }
+    for (const [f, vals] of Object.entries(ENUMS)) { if (typeof e[f] === "string" && vals.includes(e[f])) x[f] = e[f]; }
     if (typeof e.time === "string" && TRE.test(e.time)) x.time = e.time;
     if (typeof e.note === "string" && e.note) x.note = e.note.slice(0, 2000);
     o.entries.push(x);
