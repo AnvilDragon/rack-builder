@@ -32,7 +32,9 @@
   function pos(v){var n=num(v);return n!=null&&n>=0&&n<100000?n:null}
   function clean(s){
     s=s&&typeof s==="object"?s:{};var o={start:okDate(s.start)?s.start:"",conc:pos(s.conc)||40,shotEvery:pos(s.shotEvery)||7,
-      targetPeak:Array.isArray(s.targetPeak)&&pos(s.targetPeak[0])!=null&&pos(s.targetPeak[1])!=null?[pos(s.targetPeak[0]),pos(s.targetPeak[1])]:[380,440],entries:[],shots:[],labs:[]};
+      targetPeak:Array.isArray(s.targetPeak)&&pos(s.targetPeak[0])!=null&&pos(s.targetPeak[1])!=null?[pos(s.targetPeak[0]),pos(s.targetPeak[1])]:[380,440],targets:{},entries:[],shots:[],labs:[]};
+    var targetsRaw=s.targets&&typeof s.targets==="object"&&!Array.isArray(s.targets)?s.targets:{};
+    Object.keys(targetsRaw).forEach(function(k){var n=pos(targetsRaw[k]);if(n!=null&&k.length<=32)o.targets[k]=n});
     (Array.isArray(s.entries)?s.entries:[]).forEach(function(e){if(!e||!okDate(e.date))return;var x={date:e.date};
       FIELDS.forEach(function(f){var n=pos(e[f[0]]);if(n!=null)x[f[0]]=n});
       Object.keys(CHECKS).forEach(function(k){var lo=CHECKS[k][0],hi=CHECKS[k][1],n=pos(e[k]);if(n!=null&&n>=lo&&n<=hi&&n%1===0)x[k]=n});
@@ -154,23 +156,27 @@
     var pts=[];state.entries.forEach(function(e){var v=val(e,metric);if(v!=null)pts.push([dn(e.date),v])});
     var m=METRICS.filter(function(x){return x[0]===metric})[0];
     var chips='<div class="chips">'+METRICS.map(function(x){return '<button class="chip" data-metric="'+x[0]+'" aria-pressed="'+(x[0]===metric)+'">'+SL(x[0],x[1])+'</button>'}).join("")+'</div>';
-    if(pts.length<2)return '<section class="panel">'+chips+'<p class="empty">Log '+SL(m[0],m[1]).toLowerCase()+' on at least two days to see a trend line here. The 7-day average starts working after your first week.</p></section>';
+    var tgt=state.targets[metric];
+    var targetRow='<label class="f" style="max-width:220px">Target '+SL(m[0],m[1]).toLowerCase()+' <span class="unit">'+m[2]+'</span><input type="number" step="any" id="target-val" data-target="'+metric+'" value="'+(tgt==null?"":tgt)+'" placeholder="none set"></label>';
+    if(pts.length<2)return '<section class="panel">'+chips+targetRow+'<p class="empty">Log '+SL(m[0],m[1]).toLowerCase()+' on at least two days to see a trend line here. The 7-day average starts working after your first week.</p></section>';
     var W=640,H=260,pl=46,pr=14,pt=14,pb=34;
     var x0=pts[0][0],x1=pts[pts.length-1][0];if(x1===x0)x1=x0+1;
     var lo=Infinity,hi=-Infinity;pts.forEach(function(p){lo=Math.min(lo,p[1]);hi=Math.max(hi,p[1])});
+    if(tgt!=null){lo=Math.min(lo,tgt);hi=Math.max(hi,tgt)}
     var span=hi-lo||Math.abs(hi)*0.1||1;lo-=span*0.15;hi+=span*0.15;
     function X(d){return pl+(d-x0)/(x1-x0)*(W-pl-pr)}function Y(v){return pt+(hi-v)/(hi-lo)*(H-pt-pb)}
     var avg=pts.map(function(p){var s=0,c=0;pts.forEach(function(q){if(q[0]<=p[0]&&q[0]>p[0]-7){s+=q[1];c++}});return[p[0],s/c]});
     var g="";for(var i=0;i<=4;i++){var v=lo+(hi-lo)*i/4,y=Y(v);g+='<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+y+'" y2="'+y+'" stroke="var(--line)" stroke-width="1"/><text x="'+(pl-6)+'" y="'+(y+4)+'" text-anchor="end" font-size="11" fill="var(--muted)" font-family="var(--mono)">'+r(v,metric==="weight"?0:2)+'</text>'}
     var ticks="",n=Math.min(5,pts.length);for(i=0;i<n;i++){var d=Math.round(x0+(x1-x0)*i/(n-1||1));ticks+='<text x="'+X(d)+'" y="'+(H-10)+'" text-anchor="'+(i===0?"start":i===n-1?"end":"middle")+'" font-size="11" fill="var(--muted)">'+esc(new Date(d*864e5).toLocaleDateString(undefined,{month:"short",day:"numeric",timeZone:"UTC"}))+'</text>'}
     var shots="";state.shots.forEach(function(s){var d=dn(s.date);if(d>=x0&&d<=x1)shots+='<line x1="'+X(d)+'" x2="'+X(d)+'" y1="'+pt+'" y2="'+(H-pb)+'" stroke="var(--blue)" stroke-width="1" stroke-dasharray="3 4" opacity=".6"/>'});
+    var targetLine=tgt==null?"":'<line x1="'+pl+'" x2="'+(W-pr)+'" y1="'+Y(tgt)+'" y2="'+Y(tgt)+'" stroke="var(--ok)" stroke-width="1.5" stroke-dasharray="6 3"/>';
     var dots=pts.map(function(p){return '<circle cx="'+X(p[0])+'" cy="'+Y(p[1])+'" r="2.6" fill="var(--muted)" opacity=".7"/>'}).join("");
     var path=avg.map(function(p,i){return(i?"L":"M")+X(p[0]).toFixed(1)+" "+Y(p[1]).toFixed(1)}).join(" ");
     var lastA=avg[avg.length-1],first=avg[0];
-    var svg='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(SL(m[0],m[1]))+' over time">'+g+shots+dots+'<path d="'+path+'" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/><circle cx="'+X(lastA[0])+'" cy="'+Y(lastA[1])+'" r="4.5" fill="var(--accent)"/>'+ticks+'</svg>';
+    var svg='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+esc(SL(m[0],m[1]))+' over time">'+g+shots+targetLine+dots+'<path d="'+path+'" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/><circle cx="'+X(lastA[0])+'" cy="'+Y(lastA[1])+'" r="4.5" fill="var(--accent)"/>'+ticks+'</svg>';
     var ch=lastA[1]-first[1];
-    return '<section class="panel">'+chips+'<div class="tbl">'+svg+'</div><div class="legend"><span><i style="background:var(--accent)"></i>7-day average</span><span><i style="background:var(--muted)"></i>Daily value</span><span><i style="background:var(--blue)"></i>Shot day</span></div>'+
-      '<p class="note">7-day average now '+r(lastA[1])+' '+m[2]+', '+(ch>=0?"up ":"down ")+r(Math.abs(ch))+' '+m[2]+' since '+fmt(ds(first[0]))+'.</p></section>';
+    return '<section class="panel">'+chips+targetRow+'<div class="tbl">'+svg+'</div><div class="legend"><span><i style="background:var(--accent)"></i>7-day average</span><span><i style="background:var(--muted)"></i>Daily value</span><span><i style="background:var(--blue)"></i>Shot day</span>'+(tgt==null?"":'<span><i style="background:var(--ok)"></i>Target</span>')+'</div>'+
+      '<p class="note">7-day average now '+r(lastA[1])+' '+m[2]+', '+(ch>=0?"up ":"down ")+r(Math.abs(ch))+' '+m[2]+' since '+fmt(ds(first[0]))+'.'+(tgt==null?"":" "+r(Math.abs(lastA[1]-tgt))+" "+m[2]+(lastA[1]<tgt?" below":" above")+" target.")+'</p></section>';
   }
 
   function shotsPanel(){
@@ -221,8 +227,9 @@
     if(t.id==="conc"){var c=pos(v);if(c){state.conc=c;state.shots.forEach(function(s,i){var m=document.getElementById("s-mg-"+i);if(m)m.textContent=r(s.ml*c,1)+" mg"})}refreshBar();return}
     if(t.dataset.s!=null){var s=state.shots[+t.dataset.s];if(t.dataset.k==="ml"){var x=pos(v);if(x!=null){s.ml=x;document.getElementById("s-mg-"+t.dataset.s).textContent=r(x*state.conc,1)+" mg"}}else if(t.dataset.k==="date"?okDate(v):SITES.indexOf(v)>=0)s[t.dataset.k]=v;refreshBar();return}
     if(t.dataset.l!=null){var l=state.labs[+t.dataset.l];if(t.dataset.k==="date"){if(okDate(v))l.date=v}else{var y=pos(v);if(y==null)delete l[t.dataset.k];else l[t.dataset.k]=y;l.done=l.e2!=null||l.t!=null}refreshBar();return}
+    if(t.dataset.target){var tk=t.dataset.target,tv=pos(v);if(tv==null)delete state.targets[tk];else state.targets[tk]=tv;refreshBar();return}
   });
-  root.addEventListener("change",function(ev){var t=ev.target;if((t.dataset.s!=null||t.dataset.l!=null)&&t.dataset.k==="date"){sortAll();render()}});
+  root.addEventListener("change",function(ev){var t=ev.target;if((t.dataset.s!=null||t.dataset.l!=null)&&t.dataset.k==="date"){sortAll();render()}else if(t.dataset.target){render()}});
   root.addEventListener("click",function(ev){
     var b=ev.target.closest("button,tr.click");if(!b)return;
     if(b.id==="spicy-toggle"){try{localStorage.setItem("hrt-spicy",spicyOn()?"0":"1")}catch(e){}render();return}
