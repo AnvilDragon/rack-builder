@@ -311,6 +311,10 @@ const hasUser = () => !!db.prepare("SELECT 1 FROM user WHERE id=1").get();
 const SETUP_CODE = hasUser() ? "" : (process.env.SETUP_CODE || crypto.randomBytes(6).toString("hex"));
 if (SETUP_CODE) console.log(`First-time setup: enter this setup code on the sign-in page: ${SETUP_CODE}`);
 const FIRST_USER = (() => { try { return (fs.readFileSync(path.join(DATA_DIR, "first-user.txt"), "utf8") || process.env.FIRST_USER || "").trim().toLowerCase(); } catch { return (process.env.FIRST_USER || "").trim().toLowerCase(); } })();
+// Forgot-password uses the same "code goes to the container log" trust model as first-time
+// setup: whoever can read the log (the account owner) can reset the password, nobody else.
+// One pending reset at a time, in memory only — a restart simply invalidates it.
+let RESET = null; // { code, exp }
 const sameSecret =(a, b) => { const x = crypto.createHash("sha256").update(String(a)).digest(), y = crypto.createHash("sha256").update(String(b)).digest(); return crypto.timingSafeEqual(x, y); };
 const SCRYPT = { N: 16384, r: 8, p: 1 };
 function hashPw(pw) {
@@ -476,6 +480,33 @@ async function authApi(req, res, url) {
     cleared(ip);
     db.prepare("DELETE FROM session WHERE exp<?").run(Date.now());
     return json(res, 200, { ok: true }, { "Set-Cookie": cookie(req, newSession(), SESSION_DAYS * 86400) });
+  }
+
+  if (url === "/api/auth/reset/request" && m === "POST") {
+    if (!hasUser()) return json(res, 404, { error: "not set up" });
+    const ip = ipOf(req);
+    if (locked(ip)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
+    reserve(ip); // before any async work — see the comment on reserve() above
+    await readBody(req);
+    const code = crypto.randomBytes(4).toString("hex");
+    RESET = { code, exp: Date.now() + 15 * 60e3 };
+    console.log(`Password reset requested. Enter this code on the sign-in page: ${code} (valid 15 minutes)`);
+    return json(res, 200, { ok: true });
+  }
+  if (url === "/api/auth/reset/confirm" && m === "POST") {
+    if (!hasUser()) return json(res, 404, { error: "not set up" });
+    const ip = ipOf(req);
+    if (locked(ip)) return json(res, 429, { error: "Too many attempts. Try again in 15 minutes." });
+    reserve(ip); // before any async work — see the comment on reserve() above
+    const b = await readBody(req), p = String(b.password || "");
+    const codeOk = !!RESET && RESET.exp > Date.now() && sameSecret(String(b.code || "").trim().toLowerCase(), RESET.code.toLowerCase());
+    if (!codeOk) return json(res, 403, { error: "Wrong or expired reset code." });
+    if (p.length < 10 || p.length > 256) return json(res, 400, { error: "New password must be at least 10 characters." });
+    db.prepare("UPDATE user SET pw=? WHERE id=1").run(hashPw(p));
+    db.prepare("DELETE FROM session").run(); // sign out everywhere, including whoever still holds the old password
+    RESET = null;
+    cleared(ip);
+    return json(res, 200, { ok: true });
   }
 
   const sh = hasUser() ? sessionHash(req) : null;
