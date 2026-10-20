@@ -4,9 +4,10 @@
   // Spicy labels: an opt-in, device-local word swap for measurement wording. Off by default.
   // Never sent to the server, never stored in state, never in exports — purely how this one
   // browser displays label text. Toggle lives in the Data tab.
-  var SPICY_MAP={len:"Clitty stretched length",flac:"Flaccid clitty length",half:"Half-erect clitty length",erect:"Full erect clitty length",girth:"Soft clitty girth",base:"Soft clitty base girth",
+  var SPICY_MAP={len:"Clitty stretched length",flac:"Flaccid clitty length",half:"Half-erect clitty length",erect:"Full erect clitty length",girth:"Soft clitty girth",base:"Soft clitty base girth",ring:"Clitty ring girth",
     tL:"Left clitty nut",tR:"Right clitty nut",bust:"Tits",under:"Under-tit",tes:"Clitty nuts avg",diff:"Tits minus under-tit",
-    breast:"Tits",testicles:"Clitty nuts",helper:"Clitty nuts volume helper"};
+    breast:"Tits",testicles:"Clitty nuts",helper:"Clitty nuts volume helper",
+    rand:"Clitty throbs, no touching",arou:"Clitty throbs, horny",libido:"Clitty hunger",orgasm:"Clitty finish",comfort:"Clitty finish feel",dht:"Clitty shrinker taken",tender:"Tit soreness",skin:"Girl-skin softness",hair:"Fur shedding"};
   function spicyOn(){try{return localStorage.getItem("hrt-spicy")==="1"}catch(e){return false}}
   function SL(key,normal){return spicyOn()&&SPICY_MAP[key]?SPICY_MAP[key]:normal}
   var state;
@@ -127,17 +128,17 @@
       (num(e.bust)!=null&&num(e.under)!=null?'<p class="note">'+SL("diff","Bust minus underbust")+': '+r(num(e.bust)-num(e.under),2)+' in.</p>':'')+
       '<div class="checks"><div class="check"><span class="lbl">Mood</span><div class="chips" role="group" aria-label="Mood">'+MOODS.map(function(m,i){return '<button class="chip" id="mood-'+(i+1)+'" data-mood="'+(i+1)+'" aria-pressed="'+(e.mood===i+1)+'"'+dis+'>'+(i+1)+' '+m+'</button>'}).join("")+'</div></div>'+
       counterRow("sting","Pee stinging today",e.sting,dis)+
-      counterRow("rand","Erections, random (no trigger)",e.rand,dis)+
-      counterRow("arou","Erections, aroused (sight, touch, thoughts)",e.arou,dis)+
-      enumChips("tender","Breast tenderness",TENDER,e.tender,dis)+
-      numChips("libido","Libido",e.libido,dis)+
+      counterRow("rand",SL("rand","Erections, random (no trigger)"),e.rand,dis)+
+      counterRow("arou",SL("arou","Erections, aroused (sight, touch, thoughts)"),e.arou,dis)+
+      enumChips("tender",SL("tender","Breast tenderness"),TENDER,e.tender,dis)+
+      numChips("libido",SL("libido","Libido"),e.libido,dis)+
       numChips("energy","Energy",e.energy,dis)+
       numChips("dysphoria","Dysphoria",e.dysphoria,dis)+
-      numChips("skin","Skin softness",e.skin,dis)+
-      numChips("hair","Hair growth",e.hair,dis)+
-      boolChip("dht","DHT blocker taken today",e.dht,dis)+
-      boolChip("orgasm","Orgasm today",e.orgasm,dis)+
-      (e.orgasm===1?enumChips("comfort","Comfort",COMFORT,e.comfort,dis):"")+
+      numChips("skin",SL("skin","Skin softness"),e.skin,dis)+
+      numChips("hair",SL("hair","Hair growth"),e.hair,dis)+
+      boolChip("dht",SL("dht","DHT blocker taken today"),e.dht,dis)+
+      boolChip("orgasm",SL("orgasm","Orgasm today"),e.orgasm,dis)+
+      (e.orgasm===1?enumChips("comfort",SL("comfort","Comfort"),COMFORT,e.comfort,dis):"")+
       boolChip("anchor","Measured at anchor (first pee of the day)",e.anchor,dis)+
       (daysAfter(day)!=null?'<p class="note">Day '+daysAfter(day)+' after your last shot.</p>':'')+'</div>'+
       '<label class="f">Notes<textarea id="e-note" data-e="note" placeholder="Sleep, anything unusual"'+dis+'>'+esc(e.note||"")+'</textarea></label>'+
@@ -194,7 +195,7 @@
   function historyPanel(){
     if(!state.entries.length)return '<section class="panel"><p class="empty">Your daily entries will be listed here once you log one on the Today tab.</p></section>';
     var rows=state.entries.slice().reverse().map(function(e){return '<tr class="click" data-day="'+esc(e.date)+'"><td>'+fmt(e.date)+(e.time?' <span class="unit">'+esc(e.time)+'</span>':'')+'</td>'+FIELDS.map(function(f){return '<td>'+esc(e[f[0]]==null?"":e[f[0]])+'</td>'}).join("")+EXTRA.map(function(x){var v=e[x[0]];return '<td>'+(v==null?"":BOOLS.indexOf(x[0])>=0?(v===1?"Yes":"No"):esc(v))+'</td>'}).join("")+'<td>'+esc(daysAfter(e.date)==null?"":daysAfter(e.date))+'</td></tr>'}).join("");
-    return '<section class="panel"><h2>History</h2><p class="note">Tap a day to edit it.</p><div class="tbl"><table><thead><tr><th>Date</th>'+FIELDS.map(function(f){return '<th>'+SL(f[0],f[1]).replace(" length","")+'</th>'}).join("")+EXTRA.map(function(x){return '<th>'+x[1]+'</th>'}).join("")+'<th>Days after shot</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
+    return '<section class="panel"><h2>History</h2><p class="note">Tap a day to edit it.</p><div class="tbl"><table><thead><tr><th>Date</th>'+FIELDS.map(function(f){return '<th>'+SL(f[0],f[1]).replace(" length","")+'</th>'}).join("")+EXTRA.map(function(x){return '<th>'+SL(x[0],x[1])+'</th>'}).join("")+'<th>Days after shot</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
   }
 
   var confirmDel=null;
