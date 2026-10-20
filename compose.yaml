@@ -88,8 +88,11 @@ services:
       - |
         (
           apk add --no-cache openssl >/dev/null 2>&1
-          while [ ! -s /data/pki/authorities/local/root.crt ]; do sleep 1; done
-          DER=$(openssl x509 -in /data/pki/authorities/local/root.crt -outform der | base64 -w0)
+          # The official caddy image sets XDG_DATA_HOME=/data, and Caddy appends its own
+          # "caddy" directory to that for its storage root - confirmed live via
+          # `find / -name root.crt`, which found it under /data/caddy, not /data itself.
+          while [ ! -s /data/caddy/pki/authorities/local/root.crt ]; do sleep 1; done
+          DER=$(openssl x509 -in /data/caddy/pki/authorities/local/root.crt -outform der | base64 -w0)
           UUID1=$(cat /proc/sys/kernel/random/uuid)
           UUID2=$(cat /proc/sys/kernel/random/uuid)
           cat > /data/root.mobileconfig <<PROFILE
