@@ -64,7 +64,9 @@ services:
       resources:
         limits:
           cpus: "0.10"
-          memory: 64M
+          # 64M was tight enough to OOM-kill Caddy on first run, silently, right after a
+          # clean startup log — its Go runtime plus TLS cert generation needs more room.
+          memory: 128M
 
   # Read-only window into Docker: lists containers and their stats only. Cannot start, stop or change anything.
   socket-proxy:
