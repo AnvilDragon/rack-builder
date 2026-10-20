@@ -55,6 +55,8 @@ Open `http://<NAS IP>:30251` in **Safari**, sign in, then tap Share > **Add to H
 
 For HRT Log's push notifications on iPhone specifically: iOS Safari only supports web push for a PWA added to the Home Screen (iOS 16.4+), and only over HTTPS. Use `https://<NAS IP>:30252` (see "HTTPS, for push notifications" above) for the Add to Home Screen step if you want reminders there, accepting the one-time certificate warning.
 
+Clicking through that warning only trusts the cert for that one Safari tab - a home-screen PWA's *background* requests (including fetching its own icon) hit the same untrusted cert outside that exception and silently fail, which can show up as a broken/generic home screen icon or reminders that stop working. To fully trust it: visit `https://<NAS IP>:30252/root.mobileconfig`, allow the download, then **Settings > Profile Downloaded > Install**, then **Settings > General > About > Certificate Trust Settings** and enable full trust for it. Delete and re-add the home screen icon afterward.
+
 ## Privacy and security notes
 
 - Everything is served from your NAS: no third-party fonts, scripts, analytics or trackers (enforced by a strict Content-Security-Policy).
