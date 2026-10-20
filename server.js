@@ -37,11 +37,11 @@ CREATE INDEX IF NOT EXISTS labs_date ON labs(date);
 // =====================================================================================
 // HRT Log: validation, data access
 // =====================================================================================
-const FIELDS = ["len", "flac", "half", "erect", "girth", "base", "ring", "tL", "tR", "bust", "under", "weight", "waist", "hips"];
+const FIELDS = ["len", "flac", "half", "erect", "girth", "base", "ring", "tL", "tR", "bust", "under", "weight", "waist", "hips", "sleep"];
 // Whole-number daily checks, each [low, high] inclusive. Booleans are stored as 0/1.
 const CHECKS = {
-  mood: [1, 5], sting: [0, 99], rand: [0, 99], arou: [0, 99], orgasm: [0, 99],
-  libido: [1, 5], energy: [1, 5], dysphoria: [1, 5], skin: [1, 5], hair: [1, 5],
+  mood: [1, 5], sting: [0, 99], rand: [0, 99], arou: [0, 99], orgasm: [0, 99], symptom: [0, 99],
+  libido: [1, 5], energy: [1, 5], dysphoria: [1, 5], skin: [1, 5], hair: [1, 5], sleepq: [1, 5],
   dht: [0, 1], anchor: [0, 1], skincare: [0, 1],
 };
 const TENDER = ["None", "Left", "Right", "Both"];

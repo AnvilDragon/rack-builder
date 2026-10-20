@@ -1,6 +1,6 @@
-  var FIELDS=[["len","Stretched length","in",0.05],["flac","Flaccid length","in",0.05],["half","Half-erect length","in",0.05],["erect","Full erect length","in",0.05],["girth","Soft girth","in",0.05],["base","Soft base girth","in",0.05],["ring","Ring circumference","in",0.05],["tL","Left testicle","mL",0.5],["tR","Right testicle","mL",0.5],["bust","Bust","in",0.125],["under","Underbust","in",0.125],["weight","Weight","lb",0.1],["waist","Waist","in",0.125],["hips","Hips","in",0.125]];
+  var FIELDS=[["len","Stretched length","in",0.05],["flac","Flaccid length","in",0.05],["half","Half-erect length","in",0.05],["erect","Full erect length","in",0.05],["girth","Soft girth","in",0.05],["base","Soft base girth","in",0.05],["ring","Ring circumference","in",0.05],["tL","Left testicle","mL",0.5],["tR","Right testicle","mL",0.5],["bust","Bust","in",0.125],["under","Underbust","in",0.125],["weight","Weight","lb",0.1],["waist","Waist","in",0.125],["hips","Hips","in",0.125],["sleep","Sleep","hr",0.25]];
   var MOODS=["Rough","Low","Okay","Good","Great"];
-  var METRICS=[["len","Stretched length","in"],["flac","Flaccid length","in"],["half","Half-erect length","in"],["erect","Full erect length","in"],["girth","Soft girth","in"],["base","Soft base girth","in"],["ring","Ring circumference","in"],["tes","Testicle avg","mL"],["bust","Bust","in"],["diff","Bust minus underbust","in"],["weight","Weight","lb"],["waist","Waist","in"],["hips","Hips","in"],["whr","Waist-to-hip ratio",""],["mood","Mood","/ 5"],["sting","Pee stinging","times"],["rand","Random erections","times"],["arou","Aroused erections","times"],["orgasm","Orgasms","times"],["libido","Libido","/ 5"],["energy","Energy","/ 5"],["dysphoria","Dysphoria","/ 5"],["skin","Skin softness","/ 5"],["hair","Hair growth","/ 5"],["skincare","Skincare routine",""]];
+  var METRICS=[["len","Stretched length","in"],["flac","Flaccid length","in"],["half","Half-erect length","in"],["erect","Full erect length","in"],["girth","Soft girth","in"],["base","Soft base girth","in"],["ring","Ring circumference","in"],["tes","Testicle avg","mL"],["bust","Bust","in"],["diff","Bust minus underbust","in"],["weight","Weight","lb"],["waist","Waist","in"],["hips","Hips","in"],["whr","Waist-to-hip ratio",""],["sleep","Sleep","hr"],["sleepq","Sleep quality","/ 5"],["mood","Mood","/ 5"],["sting","Pee stinging","times"],["symptom","Other symptoms","times"],["rand","Random erections","times"],["arou","Aroused erections","times"],["orgasm","Orgasms","times"],["libido","Libido","/ 5"],["energy","Energy","/ 5"],["dysphoria","Dysphoria","/ 5"],["skin","Skin softness","/ 5"],["hair","Hair growth","/ 5"],["skincare","Skincare routine",""]];
   // Spicy labels: an opt-in, device-local word swap for measurement wording. Off by default.
   // Never sent to the server, never stored in state, never in exports — purely how this one
   // browser displays label text. Toggle lives in the Data tab.
@@ -26,7 +26,7 @@
   function r(n,d){if(n==null||!isFinite(n))return "";var s=(+n).toFixed(d==null?2:d);return s.indexOf(".")<0?s:s.replace(/0+$/,"").replace(/\.$/,"")}
   var DRE=/^\d{4}-\d{2}-\d{2}$/,TRE=/^\d{2}:\d{2}$/,SITES=["Thigh L","Thigh R","Thigh","Belly","Glute","Arm"];
   // Whole-number daily checks, each [low, high] inclusive. Booleans are stored as 0/1.
-  var CHECKS={mood:[1,5],sting:[0,99],rand:[0,99],arou:[0,99],orgasm:[0,99],libido:[1,5],energy:[1,5],dysphoria:[1,5],skin:[1,5],hair:[1,5],dht:[0,1],anchor:[0,1],skincare:[0,1]};
+  var CHECKS={mood:[1,5],sting:[0,99],rand:[0,99],arou:[0,99],orgasm:[0,99],symptom:[0,99],libido:[1,5],energy:[1,5],dysphoria:[1,5],skin:[1,5],hair:[1,5],sleepq:[1,5],dht:[0,1],anchor:[0,1],skincare:[0,1]};
   var TENDER=["None","Left","Right","Both"],COMFORT=["Fine","Uncomfortable","Painful"],ENUMS={tender:TENDER,comfort:COMFORT};
   function okDate(s){return typeof s==="string"&&DRE.test(s)&&isFinite(dn(s))}
   function pos(v){var n=num(v);return n!=null&&n>=0&&n<100000?n:null}
@@ -129,7 +129,9 @@
       '<div class="grid">'+FIELDS.map(function(f){return '<label class="f">'+SL(f[0],f[1])+' <span class="unit">'+f[2]+'</span><input type="number" inputmode="decimal" step="'+f[3]+'" min="0" id="e-'+f[0]+'" data-e="'+f[0]+'" value="'+esc(e[f[0]]==null?"":e[f[0]])+'"'+dis+'></label>'}).join("")+'</div>'+
       (num(e.bust)!=null&&num(e.under)!=null?'<p class="note">'+SL("diff","Bust minus underbust")+': '+r(num(e.bust)-num(e.under),2)+' in.</p>':'')+
       '<div class="checks"><div class="check"><span class="lbl">Mood</span><div class="chips" role="group" aria-label="Mood">'+MOODS.map(function(m,i){return '<button class="chip" id="mood-'+(i+1)+'" data-mood="'+(i+1)+'" aria-pressed="'+(e.mood===i+1)+'"'+dis+'>'+(i+1)+' '+m+'</button>'}).join("")+'</div></div>'+
+      numChips("sleepq","Sleep quality",e.sleepq,dis)+
       counterRow("sting","Pee stinging today",e.sting,dis)+
+      counterRow("symptom","Other symptoms today",e.symptom,dis)+
       counterRow("rand",SL("rand","Erections, random (no trigger)"),e.rand,dis)+
       counterRow("arou",SL("arou","Erections, aroused (sight, touch, thoughts)"),e.arou,dis)+
       enumChips("tender",SL("tender","Breast tenderness"),TENDER,e.tender,dis)+
@@ -144,7 +146,7 @@
       (e.orgasm>0?enumChips("comfort",SL("comfort","Comfort"),COMFORT,e.comfort,dis):"")+
       boolChip("anchor","Measured at anchor (first pee of the day)",e.anchor,dis)+
       (daysAfter(day)!=null?'<p class="note">Day '+daysAfter(day)+' after your last shot.</p>':'')+'</div>'+
-      '<label class="f">Notes<textarea id="e-note" data-e="note" placeholder="Sleep, anything unusual"'+dis+'>'+esc(e.note||"")+'</textarea></label>'+
+      '<label class="f">Notes<textarea id="e-note" data-e="note" placeholder="What the other symptoms were, anything unusual"'+dis+'>'+esc(e.note||"")+'</textarea></label>'+
       '<div class="helper" id="cls">'+classHtml(e)+'</div>'+
       '<div class="helper"><h2>'+SL("helper","Testicle volume helper")+'</h2><p>Measure through the skin with a soft tape or calipers, in centimeters: length (top to bottom), width (side to side) and depth (front to back). Volume = 0.52 × L × W × D. Leave depth blank to use width twice.</p>'+
       '<div class="row3"><label class="f">Length <span class="unit">cm</span><input type="number" step="0.1" min="0" id="h-L" data-hp="L" value="'+esc(helper.L)+'"></label><label class="f">Width <span class="unit">cm</span><input type="number" step="0.1" min="0" id="h-W" data-hp="W" value="'+esc(helper.W)+'"></label><label class="f">Depth <span class="unit">cm</span><input type="number" step="0.1" min="0" id="h-D" data-hp="D" value="'+esc(helper.D)+'"></label></div>'+
@@ -197,7 +199,7 @@
       (rows?'<div class="tbl"><table><thead><tr><th>Date</th><th>Estradiol</th><th>Testosterone</th><th>Timing</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>':'<p class="empty">No labs yet. Your next draw is expected around early January.</p>')+'</section>';
   }
 
-  var EXTRA=[["mood","Mood"],["sting","Stinging"],["rand","Random"],["arou","Aroused"],["libido","Libido"],["energy","Energy"],["dysphoria","Dysphoria"],["tender","Tenderness"],["skincare","Skincare"],["dht","DHT blocker"],["orgasm","Orgasm"],["comfort","Comfort"],["skin","Skin"],["hair","Hair"],["anchor","Anchor"]];
+  var EXTRA=[["mood","Mood"],["sleepq","Sleep quality"],["sting","Stinging"],["symptom","Symptoms"],["rand","Random"],["arou","Aroused"],["libido","Libido"],["energy","Energy"],["dysphoria","Dysphoria"],["tender","Tenderness"],["skincare","Skincare"],["dht","DHT blocker"],["orgasm","Orgasm"],["comfort","Comfort"],["skin","Skin"],["hair","Hair"],["anchor","Anchor"]];
   var BOOLS=["dht","anchor","skincare"];
   function historyPanel(){
     if(!state.entries.length)return '<section class="panel"><p class="empty">Your daily entries will be listed here once you log one on the Today tab.</p></section>';
