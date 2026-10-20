@@ -63,7 +63,9 @@ services:
   # interactive Safari tab you clicked through — background fetches a home-screen web app
   # makes (including its own icon) hit the same untrusted cert outside that exception and
   # fail silently, which is why a PWA added to the home screen can show a broken icon or
-  # stop working even though the page loads fine in the browser.
+  # stop working even though the page loads fine in the browser. The explicit Content-Type
+  # is required — iOS downloads the file fine without it but refuses to install it as a
+  # profile ("Invalid Profile"); it only recognizes application/x-x509-ca-cert specifically.
   https-proxy:
     image: caddy:2-alpine
     container_name: rack-builder-https
@@ -79,7 +81,7 @@ services:
     command:
       - sh
       - -c
-      - printf '%s\n' '{' '  debug' '}' ':8443 {' '  tls internal {' '    on_demand' '  }' '  handle /root.crt {' '    root * /data/pki/authorities/local' '    file_server' '  }' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+      - printf '%s\n' '{' '  debug' '}' ':8443 {' '  tls internal {' '    on_demand' '  }' '  handle /root.crt {' '    header Content-Type application/x-x509-ca-cert' '    root * /data/pki/authorities/local' '    file_server' '  }' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     ports:
       - "30252:8443"
     volumes:
