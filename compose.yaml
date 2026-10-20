@@ -1,6 +1,15 @@
 # TrueNAS: Apps > Discover Apps > (three dots) > Install via YAML
 # One container runs Rack Builder (/rack/) and HRT Log (/hrt/) behind one login.
 # Change /mnt/POOL/apps/rack-builder to your dataset. Open http://<NAS IP>:30251
+#
+# https-proxy terminates a LAN-only self-signed HTTPS at https://<NAS IP>:30252. Push
+# notifications (and anything else requiring a secure context) need this: browsers
+# refuse Service Workers and the Push API on plain HTTP except on localhost. The first
+# visit to the HTTPS port shows a "not secure" warning in every browser/device until you
+# click through it once — expected for a self-signed cert with no public domain. Cookies
+# set over :30252 get the Secure flag automatically (server.js reads the proxy's
+# X-Forwarded-Proto header); the plain :30251 port keeps working unchanged alongside it,
+# they just don't share a session (a browser won't send a Secure cookie over plain HTTP).
 services:
   rack-builder:
     image: ghcr.io/anvildragon/rack-builder:latest
@@ -32,6 +41,27 @@ services:
           cpus: "0.25"
           memory: 128M
 
+  # Self-signed HTTPS for the LAN. "caddy reverse-proxy --internal-certs" needs no Caddyfile
+  # or ACME setup: Caddy makes its own local CA on first start and reuses it from then on,
+  # as long as /data below stays around — losing it means a new CA, and a new browser trust
+  # prompt on every device, next time the container (re)creates rather than just restarts.
+  https-proxy:
+    image: caddy:2-alpine
+    container_name: rack-builder-https
+    restart: unless-stopped
+    command: caddy reverse-proxy --from :8443 --to rack-builder:8080 --internal-certs
+    ports:
+      - "30252:8443"
+    volumes:
+      - /mnt/POOL/apps/rack-builder/caddy:/data
+    depends_on:
+      - rack-builder
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64M
+
   # Read-only window into Docker: lists containers and their stats only. Cannot start, stop or change anything.
   socket-proxy:
     image: tecnativa/docker-socket-proxy:latest
@@ -53,4 +83,9 @@ x-portals:
     scheme: http
     host: 0.0.0.0   # TrueNAS fills in the address you opened the app from
     port: 30251
+    path: /
+  - name: Rack Builder (HTTPS)
+    scheme: https
+    host: 0.0.0.0
+    port: 30252
     path: /

@@ -14,6 +14,12 @@ Open the app and create a login on first visit (10+ character password). First-t
 3. **Apps > Discover Apps > three-dot menu > Install via YAML.** Paste `compose.yaml` and change `/mnt/POOL/apps/rack-builder` to your dataset path.
 4. Open `http://<NAS IP>:30251`, or use the app's Web UI button.
 
+## HTTPS, for push notifications
+
+HRT Log's shot-day reminders use the browser Push API, which browsers refuse outright on plain HTTP (except `localhost`). `compose.yaml` includes an `https-proxy` service (Caddy) that terminates a self-signed HTTPS at `https://<NAS IP>:30252`, reusing the same self-signed CA across restarts so you only click through the "not secure" browser warning once per device. The plain `:30251` port keeps working unchanged; the two don't share a login session, since a browser won't send a cookie set over HTTPS back over plain HTTP. Use `:30252` on whatever device should get the shot reminders, turn them on from the Data tab, and allow the notification permission prompt.
+
+Nothing to configure for this: `server.js` already sets the `Secure` cookie flag automatically when it sees the proxy's `X-Forwarded-Proto: https` header, regardless of the `COOKIE_SECURE` env var.
+
 ## Moving over from the two separate apps
 
 - **Rack Builder**: nothing to do. `state.json` in the same dataset is picked up as is.
@@ -44,6 +50,8 @@ The Data tab in HRT Log exports JSON (re-importable), CSV, or a SQLite backup. T
 ## Install on your iPhone
 
 Open `http://<NAS IP>:30251` in **Safari**, sign in, then tap Share > **Add to Home Screen**. It opens full screen like an app, with one icon for both Rack Builder and HRT Log (use the bar at the top to switch). On your home Wi-Fi this works as is. To use it away from home, put it behind an HTTPS reverse proxy or VPN and set `COOKIE_SECURE=1`.
+
+For HRT Log's push notifications on iPhone specifically: iOS Safari only supports web push for a PWA added to the Home Screen (iOS 16.4+), and only over HTTPS. Use `https://<NAS IP>:30252` (see "HTTPS, for push notifications" above) for the Add to Home Screen step if you want reminders there, accepting the one-time certificate warning.
 
 ## Privacy and security notes
 
