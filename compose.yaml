@@ -53,7 +53,18 @@ services:
     image: caddy:2-alpine
     container_name: rack-builder-https
     restart: unless-stopped
-    command: sh -c "printf '%s\n' ':8443 {' '  tls internal' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"
+    # A single command STRING here relies on whatever's deploying this correctly splitting
+    # it into argv the way a shell would — manually running the exact same command inside
+    # the container worked perfectly, but set as the container's actual entrypoint it
+    # crash-looped immediately, which is consistent with a naive whitespace-based split
+    # (TrueNAS's "Install via YAML" doesn't run this through real docker-compose — it
+    # translates into Kubernetes resources, and that layer may not respect shell quoting).
+    # A YAML list removes all ambiguity: each argv element is explicit no matter what
+    # processes this file.
+    command:
+      - sh
+      - -c
+      - printf '%s\n' ':8443 {' '  tls internal' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     ports:
       - "30252:8443"
     volumes:
