@@ -1,9 +1,10 @@
-  var FIELDS=[["len","Stretched length","in",0.05],["flac","Flaccid length","in",0.05],["half","Half-erect length","in",0.05],["erect","Full erect length","in",0.05],["tL","Left testicle","mL",0.5],["tR","Right testicle","mL",0.5],["bust","Bust","in",0.125],["under","Underbust","in",0.125],["weight","Weight","lb",0.1]];
-  var METRICS=[["len","Stretched length","in"],["flac","Flaccid length","in"],["half","Half-erect length","in"],["erect","Full erect length","in"],["tes","Testicle avg","mL"],["bust","Bust","in"],["diff","Bust minus underbust","in"],["weight","Weight","lb"]];
+  var FIELDS=[["len","Stretched length","in",0.05],["flac","Flaccid length","in",0.05],["half","Half-erect length","in",0.05],["erect","Full erect length","in",0.05],["girth","Soft girth","in",0.05],["base","Soft base girth","in",0.05],["ring","Ring circumference","in",0.05],["tL","Left testicle","mL",0.5],["tR","Right testicle","mL",0.5],["bust","Bust","in",0.125],["under","Underbust","in",0.125],["weight","Weight","lb",0.1],["waist","Waist","in",0.125],["hips","Hips","in",0.125]];
+  var MOODS=["Rough","Low","Okay","Good","Great"];
+  var METRICS=[["len","Stretched length","in"],["flac","Flaccid length","in"],["half","Half-erect length","in"],["erect","Full erect length","in"],["girth","Soft girth","in"],["base","Soft base girth","in"],["ring","Ring circumference","in"],["tes","Testicle avg","mL"],["bust","Bust","in"],["diff","Bust minus underbust","in"],["weight","Weight","lb"],["waist","Waist","in"],["hips","Hips","in"],["whr","Waist-to-hip ratio",""],["mood","Mood","/ 5"],["sting","Pee stinging","times"]];
   // Spicy labels: an opt-in, device-local word swap for measurement wording. Off by default.
   // Never sent to the server, never stored in state, never in exports — purely how this one
   // browser displays label text. Toggle lives in the Data tab.
-  var SPICY_MAP={len:"Clitty stretched length",flac:"Flaccid clitty length",half:"Half-erect clitty length",erect:"Full erect clitty length",
+  var SPICY_MAP={len:"Clitty stretched length",flac:"Flaccid clitty length",half:"Half-erect clitty length",erect:"Full erect clitty length",girth:"Soft clitty girth",base:"Soft clitty base girth",
     tL:"Left clitty nut",tR:"Right clitty nut",bust:"Tits",under:"Under-tit",tes:"Clitty nuts avg",diff:"Tits minus under-tit",
     breast:"Tits",testicles:"Clitty nuts",helper:"Clitty nuts volume helper"};
   function spicyOn(){try{return localStorage.getItem("hrt-spicy")==="1"}catch(e){return false}}
@@ -29,7 +30,7 @@
     s=s&&typeof s==="object"?s:{};var o={start:okDate(s.start)?s.start:"",conc:pos(s.conc)||40,shotEvery:pos(s.shotEvery)||7,
       targetPeak:Array.isArray(s.targetPeak)&&pos(s.targetPeak[0])!=null&&pos(s.targetPeak[1])!=null?[pos(s.targetPeak[0]),pos(s.targetPeak[1])]:[380,440],entries:[],shots:[],labs:[]};
     (Array.isArray(s.entries)?s.entries:[]).forEach(function(e){if(!e||!okDate(e.date))return;var x={date:e.date};
-      FIELDS.forEach(function(f){var n=pos(e[f[0]]);if(n!=null)x[f[0]]=n});
+      FIELDS.forEach(function(f){var n=pos(e[f[0]]);if(n!=null)x[f[0]]=n});var md=pos(e.mood);if(md!=null&&md>=1&&md<=5&&md%1===0)x.mood=md;var sg=pos(e.sting);if(sg!=null&&sg<=99&&sg%1===0)x.sting=sg;
       if(typeof e.time==="string"&&TRE.test(e.time))x.time=e.time;if(typeof e.note==="string"&&e.note)x.note=e.note.slice(0,2000);
       if(!o.entries.some(function(y){return y.date===x.date}))o.entries.push(x)});
     (Array.isArray(s.shots)?s.shots:[]).forEach(function(e){if(e&&okDate(e.date)&&pos(e.ml)!=null)o.shots.push({date:e.date,ml:pos(e.ml),site:SITES.indexOf(e.site)>=0?e.site:"Thigh"})});
@@ -41,8 +42,11 @@
   function dirty(){return JSON.stringify(state)!==saved}
   function entry(d){for(var i=0;i<state.entries.length;i++)if(state.entries[i].date===d)return state.entries[i];return null}
   function sortAll(){["entries","shots","labs"].forEach(function(k){state[k].sort(function(a,b){return a.date<b.date?-1:1})})}
+  function daysAfter(d){var ls=lastShot(d);return ls?dn(d)-dn(ls.date):null}
+  function ensure(){var e=entry(day);if(!e){e={date:day};if(day===today())e.time=nowTime();state.entries.push(e);sortAll()}return e}
+  function prune(e){if(Object.keys(e).filter(function(k){return k!=="date"&&k!=="time"}).length===0)state.entries.splice(state.entries.indexOf(e),1)}
   function lastShot(before){var s=null;state.shots.forEach(function(x){if(!before||x.date<=before)s=x});return s}
-  function val(e,k){if(!e)return null;if(k==="tes"){var a=num(e.tL),b=num(e.tR);return a!=null&&b!=null?(a+b)/2:(a!=null?a:b)}if(k==="diff"){var u=num(e.bust),w=num(e.under);return u!=null&&w!=null?u-w:null}return num(e[k])}
+  function val(e,k){if(!e)return null;if(k==="tes"){var a=num(e.tL),b=num(e.tR);return a!=null&&b!=null?(a+b)/2:(a!=null?a:b)}if(k==="whr"){var wa=num(e.waist),hi=num(e.hips);return wa!=null&&hi?wa/hi:null}if(k==="diff"){var u=num(e.bust),w=num(e.under);return u!=null&&w!=null?u-w:null}return num(e[k])}
 
 
   // ---- classification (reference ranges; descriptive, not goals) ----
@@ -111,7 +115,10 @@
     var L=num(helper.L),W=num(helper.W),D=num(helper.D),vol=L&&W?0.52*L*W*(D||W):null;
     return '<section class="panel"><div class="grid"><label class="f">Date<input type="date" id="day" value="'+esc(day)+'" max="'+today()+'"></label><label class="f">Time measured<input type="time" id="e-time" data-e="time" value="'+esc(e.time||"")+'"'+dis+'></label></div>'+
       '<div class="grid">'+FIELDS.map(function(f){return '<label class="f">'+SL(f[0],f[1])+' <span class="unit">'+f[2]+'</span><input type="number" inputmode="decimal" step="'+f[3]+'" min="0" id="e-'+f[0]+'" data-e="'+f[0]+'" value="'+esc(e[f[0]]==null?"":e[f[0]])+'"'+dis+'></label>'}).join("")+'</div>'+
-      '<label class="f">Notes<textarea id="e-note" data-e="note" placeholder="Tenderness, mood, sleep, anything unusual"'+dis+'>'+esc(e.note||"")+'</textarea></label>'+
+      '<div class="checks"><div class="check"><span class="lbl">Mood</span><div class="chips" role="group" aria-label="Mood">'+MOODS.map(function(m,i){return '<button class="chip" id="mood-'+(i+1)+'" data-mood="'+(i+1)+'" aria-pressed="'+(e.mood===i+1)+'"'+dis+'>'+(i+1)+' '+m+'</button>'}).join("")+'</div></div>'+
+      '<div class="check"><span class="lbl">Pee stinging today</span><div class="chips"><button class="chip" id="sting-0" data-sting="0" aria-pressed="'+(e.sting===0)+'"'+dis+'>None</button><button class="btn sm" id="sting-dn" data-sting="-1" aria-label="One less"'+dis+'>−</button><span class="vol" id="sting-n">'+(e.sting==null?"-":e.sting)+'</span><button class="btn sm" id="sting-up" data-sting="+1" aria-label="One more"'+dis+'>+</button></div></div>'+
+      (daysAfter(day)!=null?'<p class="note">Day '+daysAfter(day)+' after your last shot.</p>':'')+'</div>'+
+      '<label class="f">Notes<textarea id="e-note" data-e="note" placeholder="Tenderness, sleep, anything unusual"'+dis+'>'+esc(e.note||"")+'</textarea></label>'+
       '<div class="helper" id="cls">'+classHtml(e)+'</div>'+
       '<div class="helper"><h2>'+SL("helper","Testicle volume helper")+'</h2><p>Measure through the skin with a soft tape or calipers, in centimeters: length (top to bottom), width (side to side) and depth (front to back). Volume = 0.52 × L × W × D. Leave depth blank to use width twice.</p>'+
       '<div class="row3"><label class="f">Length <span class="unit">cm</span><input type="number" step="0.1" min="0" id="h-L" data-hp="L" value="'+esc(helper.L)+'"></label><label class="f">Width <span class="unit">cm</span><input type="number" step="0.1" min="0" id="h-W" data-hp="W" value="'+esc(helper.W)+'"></label><label class="f">Depth <span class="unit">cm</span><input type="number" step="0.1" min="0" id="h-D" data-hp="D" value="'+esc(helper.D)+'"></label></div>'+
@@ -162,8 +169,8 @@
 
   function historyPanel(){
     if(!state.entries.length)return '<section class="panel"><p class="empty">Your daily entries will be listed here once you log one on the Today tab.</p></section>';
-    var rows=state.entries.slice().reverse().map(function(e){return '<tr class="click" data-day="'+esc(e.date)+'"><td>'+fmt(e.date)+(e.time?' <span class="unit">'+esc(e.time)+'</span>':'')+'</td>'+FIELDS.map(function(f){return '<td>'+esc(e[f[0]]==null?"":e[f[0]])+'</td>'}).join("")+'</tr>'}).join("");
-    return '<section class="panel"><h2>History</h2><p class="note">Tap a day to edit it.</p><div class="tbl"><table><thead><tr><th>Date</th>'+FIELDS.map(function(f){return '<th>'+SL(f[0],f[1]).replace(" length","")+'</th>'}).join("")+'</tr></thead><tbody>'+rows+'</tbody></table></div></section>';
+    var rows=state.entries.slice().reverse().map(function(e){return '<tr class="click" data-day="'+esc(e.date)+'"><td>'+fmt(e.date)+(e.time?' <span class="unit">'+esc(e.time)+'</span>':'')+'</td>'+FIELDS.map(function(f){return '<td>'+esc(e[f[0]]==null?"":e[f[0]])+'</td>'}).join("")+'<td>'+esc(e.mood==null?"":e.mood)+'</td><td>'+esc(e.sting==null?"":e.sting)+'</td><td>'+esc(daysAfter(e.date)==null?"":daysAfter(e.date))+'</td></tr>'}).join("");
+    return '<section class="panel"><h2>History</h2><p class="note">Tap a day to edit it.</p><div class="tbl"><table><thead><tr><th>Date</th>'+FIELDS.map(function(f){return '<th>'+SL(f[0],f[1]).replace(" length","")+'</th>'}).join("")+'<th>Mood</th><th>Stinging</th><th>Days after shot</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';
   }
 
   var confirmDel=null;
@@ -196,6 +203,8 @@
     if(b.dataset.tab){tab=b.dataset.tab;confirmDel=null;try{localStorage.setItem("hrt-tab",tab)}catch(e){}render();return}
     if(b.dataset.metric){metric=b.dataset.metric;render();return}
     if(b.dataset.day){day=b.dataset.day;tab="today";render();return}
+    if(b.dataset.mood&&!readOnly&&!loading){var em=ensure(),mv=+b.dataset.mood;if(em.mood===mv)delete em.mood;else em.mood=mv;prune(em);msg="";render();return}
+    if(b.dataset.sting&&!readOnly&&!loading){var es=ensure(),sv=b.dataset.sting,cur=es.sting==null?0:es.sting;es.sting=sv==="0"?0:Math.max(0,Math.min(99,cur+(+sv)));msg="";render();return}
     if(b.dataset.del){var k=b.dataset.del+b.dataset.i;if(confirmDel===k){state[b.dataset.del].splice(+b.dataset.i,1);confirmDel=null}else confirmDel=k;render();return}
     var a=b.dataset.act;
     if(a==="useL"||a==="useR"){var L=num(helper.L),W=num(helper.W),D=num(helper.D);var e=entry(day);if(!e){e={date:day};if(day===today())e.time=nowTime();state.entries.push(e);sortAll();var te=document.getElementById("e-time");if(te&&!te.value&&e.time)te.value=e.time}e[a==="useL"?"tL":"tR"]=Math.round(0.52*L*W*(D||W)*10)/10;render();return}
