@@ -37,7 +37,13 @@ CREATE INDEX IF NOT EXISTS labs_date ON labs(date);
 // =====================================================================================
 // HRT Log: validation, data access
 // =====================================================================================
-const FIELDS = ["len", "flac", "half", "erect", "tL", "tR", "bust", "under", "weight"];
+const FIELDS = ["len", "flac", "half", "erect", "girth", "base", "ring", "tL", "tR", "bust", "under", "weight", "waist", "hips"];
+// Whole-number daily checks: mood 1-5, pee stinging count 0-99.
+const CHECKS = { mood: [1, 5], sting: [0, 99] };
+const COLS = [...FIELDS, ...Object.keys(CHECKS)];
+// Add any columns an older database is missing.
+{ const have = new Set(db.prepare("PRAGMA table_info(entries)").all().map(c => c.name));
+  for (const c of COLS) if (!have.has(c)) db.exec(`ALTER TABLE entries ADD COLUMN ${c} ${c in CHECKS ? "INTEGER" : "REAL"}`); }
 const SITES = ["Thigh L", "Thigh R", "Thigh", "Belly", "Glute", "Arm"];
 const DRE = /^\d{4}-\d{2}-\d{2}$/, TRE = /^\d{2}:\d{2}$/;
 const okDate = s => typeof s === "string" && DRE.test(s) && isFinite(Date.parse(s + "T00:00:00Z"));
@@ -52,6 +58,7 @@ function clean(s) {
     seen.add(e.date);
     const x = { date: e.date };
     for (const f of FIELDS) { const n = pos(e[f]); if (n != null) x[f] = n; }
+    for (const [f, [lo, hi]] of Object.entries(CHECKS)) { const n = pos(e[f]); if (n != null && Number.isInteger(n) && n >= lo && n <= hi) x[f] = n; }
     if (typeof e.time === "string" && TRE.test(e.time)) x.time = e.time;
     if (typeof e.note === "string" && e.note) x.note = e.note.slice(0, 2000);
     o.entries.push(x);
@@ -89,8 +96,8 @@ function writeState(raw) {
   db.exec("BEGIN IMMEDIATE");
   try {
     db.exec("DELETE FROM entries; DELETE FROM shots; DELETE FROM labs");
-    const ie = db.prepare(`INSERT INTO entries(date,time,note,${FIELDS.join(",")}) VALUES(?,?,?,${FIELDS.map(() => "?").join(",")})`);
-    for (const e of s.entries) ie.run(e.date, e.time ?? null, e.note ?? null, ...FIELDS.map(f => e[f] ?? null));
+    const ie = db.prepare(`INSERT INTO entries(date,time,note,${COLS.join(",")}) VALUES(?,?,?,${COLS.map(() => "?").join(",")})`);
+    for (const e of s.entries) ie.run(e.date, e.time ?? null, e.note ?? null, ...COLS.map(f => e[f] ?? null));
     const is = db.prepare("INSERT INTO shots(date,ml,site) VALUES(?,?,?)");
     for (const x of s.shots) is.run(x.date, x.ml, x.site);
     const il = db.prepare("INSERT INTO labs(date,e2,t,done) VALUES(?,?,?,?)");
@@ -413,7 +420,7 @@ const PUBLIC_FILES = new Set(["/login.html", "/login.js", "/login.css", "/manife
 const isPublic = p => PUBLIC_FILES.has(p) || p.startsWith("/icons/");
 
 // ---------- HRT export ----------
-const CSV_COLS = ["type", "date", "time", ...FIELDS, "note", "ml", "site", "e2", "t"];
+const CSV_COLS = ["type", "date", "time", ...COLS, "note", "ml", "site", "e2", "t"];
 const csvCell = v => { if (v == null) return ""; const s = String(v).replace(/^([=+\-@\t\r])/, "'$1"); return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
 function toCsv(s) {
   const rows = [CSV_COLS.join(",")];
