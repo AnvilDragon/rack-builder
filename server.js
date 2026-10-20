@@ -515,11 +515,24 @@ async function pushAll(payloadObj) {
   const subs = db.prepare("SELECT endpoint,p256dh,auth FROM push_sub").all();
   let sent = 0;
   for (const sub of subs) {
+    // Log the push service's origin (fcm.googleapis.com, Mozilla's autopush, etc.), never
+    // the full endpoint — that includes a per-device subscription token.
+    const origin = new URL(sub.endpoint).origin;
     try {
       const r = await sendPush(sub, payloadObj);
-      if (r.status === 404 || r.status === 410) db.prepare("DELETE FROM push_sub WHERE endpoint=?").run(sub.endpoint);
-      else if (r.ok) sent++;
-    } catch {}
+      if (r.status === 404 || r.status === 410) {
+        db.prepare("DELETE FROM push_sub WHERE endpoint=?").run(sub.endpoint);
+        console.log(`push: ${origin} returned ${r.status}, removed stale subscription`);
+      } else if (r.ok) {
+        sent++;
+        console.log(`push: ${origin} accepted, status ${r.status}`);
+      } else {
+        const text = await r.text().catch(() => "");
+        console.log(`push: ${origin} rejected, status ${r.status}: ${text.slice(0, 300)}`);
+      }
+    } catch (e) {
+      console.log(`push: ${origin} failed: ${e.message}`);
+    }
   }
   return { sent, total: subs.length };
 }
