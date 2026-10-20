@@ -41,19 +41,19 @@ services:
           cpus: "0.25"
           memory: 128M
 
-  # Self-signed HTTPS for the LAN. "caddy reverse-proxy --internal-certs" needs no Caddyfile
-  # or ACME setup: Caddy makes its own local CA on first start and reuses it from then on,
-  # as long as /data below stays around — losing it means a new CA, and a new browser trust
-  # prompt on every device, next time the container (re)creates rather than just restarts.
+  # Self-signed HTTPS for the LAN. "caddy reverse-proxy --from https://..." turned out to
+  # NOT reliably force TLS on a bare ":8443" address with no hostname — its automatic-HTTPS
+  # inference still left it serving plain HTTP ("HTTP/2 skipped because it requires TLS" in
+  # its own logs, even with the scheme spelled out). Writing a real Caddyfile with an
+  # explicit "tls internal" sidesteps that inference entirely: it's Caddy's standard,
+  # unambiguous way to force the internal self-signed issuer regardless of the address
+  # format. Caddy keeps its local CA (so the cert survives restarts) as long as /data below
+  # stays around — losing it means a new CA, and a new browser trust prompt on every device.
   https-proxy:
     image: caddy:2-alpine
     container_name: rack-builder-https
     restart: unless-stopped
-    # "--from :8443" with no scheme left automatic HTTPS off, serving plain HTTP on 8443
-    # instead of TLS ("automatic HTTPS is completely disabled for server" in its own logs).
-    # An explicit "https://" forces the TLS listener; --internal-certs then points it at
-    # Caddy's local CA instead of trying public ACME (which can't work without a domain).
-    command: caddy reverse-proxy --from https://:8443 --to rack-builder:8080 --internal-certs
+    command: sh -c "printf '%s\n' ':8443 {' '  tls internal' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile"
     ports:
       - "30252:8443"
     volumes:
