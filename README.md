@@ -20,6 +20,8 @@ HRT Log's shot-day reminders use the browser Push API, which browsers refuse out
 
 Nothing to configure for this: `server.js` already sets the `Secure` cookie flag automatically when it sees the proxy's `X-Forwarded-Proto: https` header, regardless of the `COOKIE_SECURE` env var.
 
+One thing you *do* need to set: `VAPID_CONTACT` to a real `mailto:` or `https:` contact you control. Safari/iOS specifically checks this is reachable and rejects a placeholder outright (403 `BadJwtToken`); Firefox and Chrome don't care. Without it, reminders work on desktop Firefox/Chrome but silently fail on Safari/iOS.
+
 ## Moving over from the two separate apps
 
 - **Rack Builder**: nothing to do. `state.json` in the same dataset is picked up as is.
@@ -45,7 +47,7 @@ The Data tab in HRT Log exports JSON (re-importable), CSV, or a SQLite backup. T
 
 ## Run locally
 
-`node server.js` (Node 22.13 or newer), then http://localhost:8080. Environment: `PORT`, `DATA_DIR` (default `./data`), `COOKIE_SECURE`, `SETUP_CODE`, `DOCKER_HOST_PROXY`, `LIVE_INTERVAL`, `PRICES_TOKEN`, `PRICES_REPO`, `PRICES_EVERY_HOURS`.
+`node server.js` (Node 22.13 or newer), then http://localhost:8080. Environment: `PORT`, `DATA_DIR` (default `./data`), `COOKIE_SECURE`, `SETUP_CODE`, `DOCKER_HOST_PROXY`, `LIVE_INTERVAL`, `PRICES_TOKEN`, `PRICES_REPO`, `PRICES_EVERY_HOURS`, `VAPID_CONTACT`.
 
 ## Install on your iPhone
 

@@ -472,9 +472,15 @@ function vapidPrivateKey() {
     format: "jwk",
   });
 }
+// Apple's web push service checks this is a real, reachable contact and rejects a
+// placeholder like "mailto:push@localhost" outright (403 BadJwtToken) — confirmed against
+// Apple's own documented rejection causes and matching real-world reports. Mozilla's service
+// doesn't validate this at all, which is why only Safari/iOS subscriptions were failing.
+// Set VAPID_CONTACT to your own mailto: or https: contact; never hardcode a real one here.
+const VAPID_SUB = /^(mailto:|https:\/\/)\S+$/.test(process.env.VAPID_CONTACT || "") ? process.env.VAPID_CONTACT : "mailto:admin@example.com";
 function vapidJWT(audience) {
   const header = b64u(Buffer.from(JSON.stringify({ typ: "JWT", alg: "ES256" })));
-  const payload = b64u(Buffer.from(JSON.stringify({ aud: audience, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: "mailto:push@localhost" })));
+  const payload = b64u(Buffer.from(JSON.stringify({ aud: audience, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: VAPID_SUB })));
   const signingInput = header + "." + payload;
   const sig = crypto.sign("sha256", Buffer.from(signingInput), { key: vapidPrivateKey(), dsaEncoding: "ieee-p1363" });
   return signingInput + "." + b64u(sig);
