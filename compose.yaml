@@ -41,14 +41,15 @@ services:
           cpus: "0.25"
           memory: 128M
 
-  # Self-signed HTTPS for the LAN. "caddy reverse-proxy --from https://..." turned out to
-  # NOT reliably force TLS on a bare ":8443" address with no hostname — its automatic-HTTPS
-  # inference still left it serving plain HTTP ("HTTP/2 skipped because it requires TLS" in
-  # its own logs, even with the scheme spelled out). Writing a real Caddyfile with an
-  # explicit "tls internal" sidesteps that inference entirely: it's Caddy's standard,
-  # unambiguous way to force the internal self-signed issuer regardless of the address
-  # format. Caddy keeps its local CA (so the cert survives restarts) as long as /data below
-  # stays around — losing it means a new CA, and a new browser trust prompt on every device.
+  # Self-signed HTTPS for the LAN, reached by raw IP (no hostname, so no SNI). A bare
+  # "tls internal" with no "on_demand" never actually issues a certificate for a site with
+  # no declared hostname — confirmed via debug logging: "no certificate matching TLS
+  # ClientHello", "on_demand":false. "on_demand" scoped inside this site's own tls block
+  # tells Caddy to issue a cert from the internal CA reactively, per connection, regardless
+  # of what identity (or lack of SNI) the client presents — the right fit for "anyone on the
+  # LAN, connecting by IP, no DNS." Caddy keeps its local CA (so the cert, and the
+  # certificates it issues, survive restarts) as long as /data below stays around — losing
+  # it means a new CA, and a new browser trust prompt on every device.
   https-proxy:
     image: caddy:2-alpine
     container_name: rack-builder-https
@@ -64,7 +65,7 @@ services:
     command:
       - sh
       - -c
-      - printf '%s\n' '{' '  debug' '}' ':8443 {' '  tls internal' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+      - printf '%s\n' '{' '  debug' '}' ':8443 {' '  tls internal {' '    on_demand' '  }' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile && caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     ports:
       - "30252:8443"
     volumes:
