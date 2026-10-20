@@ -12,6 +12,7 @@
   function SL(key,normal){return spicyOn()&&SPICY_MAP[key]?SPICY_MAP[key]:normal}
   var state;
   var readOnly=false,loading=false,view="boot",rev=0,msg="";
+  var pushSubscribed=false,pushMsg="";
   var tab="today",day=today(),metric="len",helper={L:"",W:"",D:""};
   try{tab=localStorage.getItem("hrt-tab")||tab}catch(e){}
   var root=document.getElementById("app");
@@ -250,6 +251,8 @@
     if(a==="addLab"){state.labs.push({date:today()});sortAll();render();return}
     if(a==="discard"){state=JSON.parse(saved||initial);msg="";render();return}
     if(a==="logout"){call("POST","/api/auth/logout",{}).then(toLogin);return}
+    if(a==="pushToggle"){pushSubscribed?pushUnsub():pushSub();return}
+    if(a==="pushTest"){setPush("Sending…");call("POST","api/push/test",{}).then(function(r){setPush(r.ok?("Sent to "+r.data.sent+" of "+r.data.total+" device(s).") : "Couldn't send test.")});return}
     if(a==="save")save();
   });
 
@@ -284,6 +287,9 @@
       '<section class="panel" style="margin-top:12px"><h2>Import</h2><p class="note">Restore from a JSON export. This replaces everything currently in the log.</p>'+
       '<input type="file" id="imp" accept="application/json,.json"'+(dirty()?" disabled":"")+'>'+(dirty()?'<p class="note">Save or discard your changes first.</p>':'')+'</section>'+
       '<section class="panel" style="margin-top:12px"><h2>Display</h2><button type="button" class="btn'+(spicyOn()?" primary":"")+'" id="spicy-toggle">'+(spicyOn()?"Stop degrading me":"Yes, please degrade me")+'</button><p class="note">Crude wording for measurements, only on this device, off by default.</p></section>'+
+      '<section class="panel" style="margin-top:12px"><h2>Reminders</h2><p class="note">Get a browser notification on shot day and the day before. Needs HTTPS (or localhost) and browser permission.</p>'+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn'+(pushSubscribed?" primary":"")+'" data-act="pushToggle">'+(pushSubscribed?"Turn off reminders":"Turn on reminders")+'</button>'+(pushSubscribed?'<button type="button" class="btn" data-act="pushTest">Send test notification</button>':"")+'</div>'+
+      '<p class="note" id="push-msg" role="status">'+esc(pushMsg)+'</p></section>'+
       '<section class="panel" style="margin-top:12px"><h2>Account</h2><form id="pw" style="display:grid;gap:12px" autocomplete="off"><div class="grid">'+
       '<label class="f">Current password<input type="password" id="pw-c" autocomplete="current-password" required></label>'+
       '<label class="f">New password <span class="unit">10+ characters</span><input type="password" id="pw-n" autocomplete="new-password" minlength="10" required></label></div>'+
@@ -291,6 +297,28 @@
       '<p class="note" id="data-msg" role="status">'+esc(dataMsg)+'</p></section>';
   }
   function setData(m){dataMsg=m;var e=document.getElementById("data-msg");if(e)e.textContent=m}
+  function setPush(m){pushMsg=m;var e=document.getElementById("push-msg");if(e)e.textContent=m}
+  function urlBase64ToUint8Array(base64){var raw=atob(base64.replace(/-/g,"+").replace(/_/g,"/"));var arr=new Uint8Array(raw.length);for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);return arr}
+  function pushSub(){
+    setPush("Requesting permission…");
+    if(!("serviceWorker" in navigator)||!("PushManager" in window))return setPush("Push isn't supported in this browser.");
+    navigator.serviceWorker.register("/sw.js").then(function(reg){
+      return Notification.requestPermission().then(function(perm){
+        if(perm!=="granted")throw new Error("Notification permission was not granted.");
+        return call("GET","api/push/vapid-key");
+      }).then(function(r){
+        if(!r.ok)throw new Error("Couldn't reach the server.");
+        return reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(r.data.key)});
+      }).then(function(sub){return call("POST","api/push/subscribe",sub.toJSON())});
+    }).then(function(r){
+      if(r&&r.ok){pushSubscribed=true;setPush("Reminders on.");render()}else setPush("Couldn't save the subscription.")
+    }).catch(function(e){setPush(e.message||"Couldn't turn on reminders.")});
+  }
+  function pushUnsub(){
+    navigator.serviceWorker.getRegistration().then(function(reg){return reg&&reg.pushManager.getSubscription()}).then(function(sub){
+      if(!sub)return;var endpoint=sub.endpoint;return sub.unsubscribe().then(function(){return call("POST","api/push/unsubscribe",{endpoint:endpoint})})
+    }).then(function(){pushSubscribed=false;setPush("Reminders off.");render()}).catch(function(){setPush("Couldn't turn off reminders.")});
+  }
   root.addEventListener("submit",function(ev){
     if(ev.target.id!=="pw")return;ev.preventDefault();
     call("POST","/api/auth/password",{current:document.getElementById("pw-c").value,next:document.getElementById("pw-n").value}).then(function(r){
@@ -304,6 +332,7 @@
       if(r.ok)return load().then(function(){setMsg("Imported.")});setData(r.data.error||"Import failed.")}).catch(function(){setData("That file isn't valid JSON.")});
   });
 
+  if("serviceWorker" in navigator)navigator.serviceWorker.getRegistration().then(function(reg){return reg&&reg.pushManager.getSubscription()}).then(function(sub){if(sub){pushSubscribed=true;if(tab==="data")render()}}).catch(function(){});
   render();
   call("GET","/api/auth/status").then(function(r){
     if(!r.data.setup||!r.data.authed)return toLogin();

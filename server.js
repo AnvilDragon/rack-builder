@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS entries(date TEXT PRIMARY KEY, time TEXT, note TEXT,
   len REAL, flac REAL, half REAL, erect REAL, tL REAL, tR REAL, bust REAL, under REAL, weight REAL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS shots(id INTEGER PRIMARY KEY, date TEXT NOT NULL, ml REAL NOT NULL, site TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS labs(id INTEGER PRIMARY KEY, date TEXT NOT NULL, e2 REAL, t REAL, done INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS push_sub(endpoint TEXT PRIMARY KEY, p256dh TEXT NOT NULL, auth TEXT NOT NULL, created INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS shots_date ON shots(date);
 CREATE INDEX IF NOT EXISTS labs_date ON labs(date);
 `);
@@ -446,6 +447,109 @@ function toCsv(s) {
 const stamp = () => new Date().toISOString().slice(0, 10);
 
 // =====================================================================================
+// Web Push (shot-day reminders): hand-rolled VAPID + RFC 8291/8188 aes128gcm, no dependency.
+// =====================================================================================
+const b64u = buf => buf.toString("base64url");
+const unb64u = s => Buffer.from(s, "base64url");
+const pad32 = buf => (buf.length >= 32 ? buf : Buffer.concat([Buffer.alloc(32 - buf.length), buf]));
+const hkdf = (ikm, salt, info, len) => Buffer.from(crypto.hkdfSync("sha256", ikm, salt, info, len));
+
+// One VAPID keypair identifies this server to push services; generated once, kept in DATA_DIR.
+const VAPID_FILE = path.join(DATA_DIR, "vapid.json");
+let VAPID;
+try {
+  const saved = JSON.parse(fs.readFileSync(VAPID_FILE, "utf8"));
+  VAPID = { pub: unb64u(saved.pub), priv: unb64u(saved.priv) };
+} catch {
+  const ecdh = crypto.createECDH("prime256v1");
+  ecdh.generateKeys();
+  VAPID = { pub: ecdh.getPublicKey(), priv: ecdh.getPrivateKey() };
+  fs.writeFileSync(VAPID_FILE, JSON.stringify({ pub: b64u(VAPID.pub), priv: b64u(VAPID.priv) }));
+}
+function vapidPrivateKey() {
+  return crypto.createPrivateKey({
+    key: { kty: "EC", crv: "P-256", x: b64u(VAPID.pub.subarray(1, 33)), y: b64u(VAPID.pub.subarray(33, 65)), d: b64u(pad32(VAPID.priv)) },
+    format: "jwk",
+  });
+}
+function vapidJWT(audience) {
+  const header = b64u(Buffer.from(JSON.stringify({ typ: "JWT", alg: "ES256" })));
+  const payload = b64u(Buffer.from(JSON.stringify({ aud: audience, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: "mailto:push@localhost" })));
+  const signingInput = header + "." + payload;
+  const sig = crypto.sign("sha256", Buffer.from(signingInput), { key: vapidPrivateKey(), dsaEncoding: "ieee-p1363" });
+  return signingInput + "." + b64u(sig);
+}
+// RFC 8291 payload encryption: derive a content-encryption key and nonce from an ephemeral
+// ECDH exchange with the subscriber's p256dh key plus their auth secret, then a single
+// RFC 8188 aes128gcm record (payloads here are a short JSON object, always one record).
+function encryptPush(payloadBuf, sub) {
+  const clientPub = unb64u(sub.p256dh), authSecret = unb64u(sub.auth);
+  const ecdh = crypto.createECDH("prime256v1");
+  ecdh.generateKeys();
+  const serverPub = ecdh.getPublicKey();
+  const sharedSecret = ecdh.computeSecret(clientPub);
+  const ikm = hkdf(sharedSecret, authSecret, Buffer.concat([Buffer.from("WebPush: info\0"), clientPub, serverPub]), 32);
+  const salt = crypto.randomBytes(16);
+  const cek = hkdf(ikm, salt, Buffer.from("Content-Encoding: aes128gcm\0"), 16);
+  const nonce = hkdf(ikm, salt, Buffer.from("Content-Encoding: nonce\0"), 12);
+  const cipher = crypto.createCipheriv("aes-128-gcm", cek, nonce);
+  const ciphertext = Buffer.concat([cipher.update(Buffer.concat([payloadBuf, Buffer.from([2])])), cipher.final(), cipher.getAuthTag()]);
+  const header = Buffer.alloc(16 + 4 + 1 + serverPub.length);
+  salt.copy(header, 0);
+  header.writeUInt32BE(4096, 16);
+  header.writeUInt8(serverPub.length, 20);
+  serverPub.copy(header, 21);
+  return Buffer.concat([header, ciphertext]);
+}
+async function sendPush(sub, payloadObj) {
+  const body = encryptPush(Buffer.from(JSON.stringify(payloadObj)), sub);
+  const jwt = vapidJWT(new URL(sub.endpoint).origin);
+  return fetch(sub.endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream", "Content-Encoding": "aes128gcm", TTL: "86400", Authorization: `vapid t=${jwt}, k=${b64u(VAPID.pub)}` },
+    body,
+    signal: AbortSignal.timeout(15000),
+  });
+}
+async function pushAll(payloadObj) {
+  const subs = db.prepare("SELECT endpoint,p256dh,auth FROM push_sub").all();
+  let sent = 0;
+  for (const sub of subs) {
+    try {
+      const r = await sendPush(sub, payloadObj);
+      if (r.status === 404 || r.status === 410) db.prepare("DELETE FROM push_sub WHERE endpoint=?").run(sub.endpoint);
+      else if (r.ok) sent++;
+    } catch {}
+  }
+  return { sent, total: subs.length };
+}
+// Shot-day reminder: same "due today / due tomorrow" window as the in-app alert banner.
+function shotReminderText() {
+  const last = db.prepare("SELECT date FROM shots ORDER BY date DESC LIMIT 1").get();
+  if (!last) return null;
+  const every = (getSetting("meta") || {}).shotEvery || 7;
+  const due = Date.parse(last.date + "T00:00:00Z") / 864e5 + every;
+  const today0 = Math.floor(Date.now() / 864e5);
+  const left = due - today0;
+  if (left === 0) return "Shot day today.";
+  if (left === 1) return "Shot day tomorrow.";
+  if (left < 0) return `Your shot was due ${-left} day${left === -1 ? "" : "s"} ago.`;
+  return null;
+}
+(async function pushLoop() {
+  for (;;) {
+    try {
+      const msg = shotReminderText(), todayStr = stamp();
+      if (msg && getSetting("pushLastSent") !== todayStr) {
+        await pushAll({ title: "HRT Log", body: msg, url: "/hrt/" });
+        setSetting("pushLastSent", todayStr);
+      }
+    } catch {}
+    await new Promise(r => setTimeout(r, 3600e3));
+  }
+})();
+
+// =====================================================================================
 // Routes
 // =====================================================================================
 async function authApi(req, res, url) {
@@ -557,12 +661,28 @@ async function hrtApi(req, res, url, q) {
       const tmp = path.join(DATA_DIR, `backup-${crypto.randomBytes(8).toString("hex")}.tmp`); // unique, so two exports cannot collide
       try {
         fs.rmSync(tmp, { force: true }); db.exec(`VACUUM INTO '${tmp.replace(/'/g, "''")}'`);
-        const bk = new DatabaseSync(tmp); bk.exec("DELETE FROM session; DELETE FROM user; VACUUM"); bk.close();
+        const bk = new DatabaseSync(tmp); bk.exec("DELETE FROM session; DELETE FROM user; DELETE FROM push_sub; VACUUM"); bk.close();
         return send(res, 200, fs.readFileSync(tmp), { "Content-Type": "application/vnd.sqlite3", "Content-Disposition": `attachment; filename="hrt-log-${stamp()}.db"` });
       } finally { fs.rmSync(tmp, { force: true }); }
     }
     return send(res, 200, JSON.stringify({ app: "hrt-log", version: 1, exported: new Date().toISOString(), state: readState() }, null, 2), { "Content-Type": "application/json", "Content-Disposition": `attachment; filename="hrt-log-${stamp()}.json"` });
   }
+  if (url === "/hrt/api/push/vapid-key" && m === "GET") return json(res, 200, { key: b64u(VAPID.pub) });
+  if (url === "/hrt/api/push/subscribe" && m === "POST") {
+    const b = await readBody(req);
+    const endpoint = typeof b.endpoint === "string" ? b.endpoint : "";
+    const p256dh = b.keys && typeof b.keys.p256dh === "string" ? b.keys.p256dh : "";
+    const auth = b.keys && typeof b.keys.auth === "string" ? b.keys.auth : "";
+    if (!endpoint.startsWith("https://") || endpoint.length > 2000 || !p256dh || !auth) return json(res, 400, { error: "bad subscription" });
+    db.prepare("INSERT INTO push_sub(endpoint,p256dh,auth,created) VALUES(?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth").run(endpoint, p256dh, auth, Date.now());
+    return json(res, 200, { ok: true });
+  }
+  if (url === "/hrt/api/push/unsubscribe" && m === "POST") {
+    const b = await readBody(req);
+    db.prepare("DELETE FROM push_sub WHERE endpoint=?").run(String(b.endpoint || ""));
+    return json(res, 200, { ok: true });
+  }
+  if (url === "/hrt/api/push/test" && m === "POST") return json(res, 200, { ok: true, ...(await pushAll({ title: "HRT Log test", body: "Push notifications are working.", url: "/hrt/" })) });
   return json(res, 404, { error: "not found" });
 }
 
