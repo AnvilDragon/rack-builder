@@ -135,7 +135,16 @@ services:
         </plist>
         PROFILE
         ) &
-        printf '%s\n' '{' '  debug' '}' ':8443 {' '  tls internal {' '    on_demand' '  }' '  handle /root.mobileconfig {' '    header Content-Type application/x-apple-aspen-config' '    root * /data' '    file_server' '  }' '  reverse_proxy rack-builder:8080' '}' > /etc/caddy/Caddyfile
+        # Lets rack-builder tell "this request really came through Caddy" apart from "this
+        # request hit the direct :30251 port with a forged X-Forwarded-For" - without it, the
+        # app can't tell real HTTPS clients apart (they all look like they're coming from this
+        # container), which collapses its per-IP brute-force lockout onto one shared bucket that
+        # anyone on the LAN can trip to lock out the real HTTPS user. World-readable by default
+        # (rack-builder reads it as a non-root user), regenerated only if missing so it survives
+        # restarts.
+        [ -s /data/proxy-secret.txt ] || cat /proc/sys/kernel/random/uuid > /data/proxy-secret.txt
+        PROXY_SECRET=$(cat /data/proxy-secret.txt)
+        printf '%s\n' '{' '  debug' '}' ':8443 {' '  tls internal {' '    on_demand' '  }' '  handle /root.mobileconfig {' '    header Content-Type application/x-apple-aspen-config' '    root * /data' '    file_server' '  }' '  reverse_proxy rack-builder:8080 {' "    header_up X-Proxy-Secret $PROXY_SECRET" '  }' '}' > /etc/caddy/Caddyfile
         exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     ports:
       - "30252:8443"

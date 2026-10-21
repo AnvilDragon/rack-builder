@@ -128,11 +128,12 @@ function writeState(raw) {
 const RB_STATE = path.join(DATA_DIR, "state.json");
 const RB_PATH_RE = /^[A-Za-z0-9_\-.]{1,64}\/[A-Za-z0-9_\-.:@+~]{1,200}$/;
 const KEY_RE = /^[A-Za-z0-9_\-.]{1,64}$/;
-let RB = { ver: 0, docs: {} };
+let RB = { ver: 0, docs: {}, docVers: {} };
 try {
   const d = JSON.parse(fs.readFileSync(RB_STATE, "utf8"));
   if (d && typeof d.docs === "object" && d.docs && !Array.isArray(d.docs)) RB = d;
 } catch {}
+if (!RB.docVers || typeof RB.docVers !== "object" || Array.isArray(RB.docVers)) RB.docVers = {}; // older state.json files predate per-doc versions
 function saveRb() {
   const tmp = RB_STATE + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(RB));
@@ -366,9 +367,33 @@ const authed = req => hasUser() && !!sessionHash(req);
 // before starting the next one, reserve() being synchronous and ahead of every `await` here
 // means the Nth concurrent request really does see the first N-1 reservations already counted.
 const fails = new Map();
-const ipOf = req => req.socket.remoteAddress || "?";
+// Caddy's https-proxy terminates every HTTPS client's own connection and opens its own to this
+// server, so req.socket.remoteAddress alone is Caddy's address for ALL proxied traffic —
+// collapsing every real client onto one IP and letting anyone trigger a lockout that hits every
+// other HTTPS user too. X-Forwarded-For is only trusted when it arrives with the shared secret
+// Caddy injects (see compose.yaml's https-proxy command), which a request hitting the direct
+// :30251 port can't forge without reading that file out of the container.
+const PROXY_SECRET_FILE = path.join(DATA_DIR, "caddy", "proxy-secret.txt");
+let proxySecretCache = null;
+function proxySecret() {
+  if (proxySecretCache) return proxySecretCache;
+  try { return (proxySecretCache = fs.readFileSync(PROXY_SECRET_FILE, "utf8").trim()); } catch { return ""; }
+}
+const ipOf = req => {
+  const hdr = req.headers["x-proxy-secret"], secret = proxySecret();
+  if (hdr && secret && sameSecret(hdr, secret)) {
+    const xff = req.headers["x-forwarded-for"];
+    if (xff) return xff.split(",")[0].trim();
+  }
+  return req.socket.remoteAddress || "?";
+};
 function locked(ip) { const f = fails.get(ip); return !!f && f.until > Date.now(); }
-function reserve(ip) { const f = fails.get(ip) || { n: 0, until: 0 }; if (++f.n >= 5) { f.until = Date.now() + 15 * 60e3; f.n = 0; } fails.set(ip, f); }
+function reserve(ip) {
+  const f = fails.get(ip) || { n: 0, until: 0 };
+  if (++f.n >= 5) { f.until = Date.now() + 15 * 60e3; f.n = 0; }
+  fails.set(ip, f);
+  if (fails.size > 1000) for (const [k, v] of fails) if (v.until && v.until < Date.now()) fails.delete(k);
+}
 const cleared = ip => fails.delete(ip);
 
 // =====================================================================================
@@ -658,6 +683,19 @@ async function authApi(req, res, url) {
   return json(res, 404, { error: "not found" });
 }
 
+// Reject private/loopback/link-local hosts so an authenticated subscribe can't be used to make
+// this server fetch internal addresses once a day (SSRF-adjacent) — single-user and auth-only
+// already, but there's no reason to accept it either.
+function endpointOk(u) {
+  let x; try { x = new URL(u); } catch { return false; }
+  if (x.protocol !== "https:") return false;
+  const h = x.hostname.toLowerCase();
+  if (h === "localhost" || h === "::1" || h === "0.0.0.0") return false;
+  if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return false;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return false;
+  return true;
+}
+
 async function hrtApi(req, res, url, q) {
   const m = req.method;
   if (url === "/hrt/api/state" && m === "GET") return json(res, 200, { rev: getRev(), state: readState() });
@@ -670,6 +708,7 @@ async function hrtApi(req, res, url, q) {
   if (url === "/hrt/api/import" && m === "POST") {
     const b = await readBody(req), s = b.state || b;
     if (!s || !Array.isArray(s.entries) || !Array.isArray(s.shots) || !Array.isArray(s.labs)) return json(res, 400, { error: "That file isn't an HRT Log export." });
+    if (b.rev !== undefined && b.rev !== getRev()) return json(res, 409, { error: "stale", rev: getRev() });
     return json(res, 200, { rev: writeState(s) });
   }
   if (url === "/hrt/api/export" && m === "GET") {
@@ -692,7 +731,7 @@ async function hrtApi(req, res, url, q) {
     const endpoint = typeof b.endpoint === "string" ? b.endpoint : "";
     const p256dh = b.keys && typeof b.keys.p256dh === "string" ? b.keys.p256dh : "";
     const auth = b.keys && typeof b.keys.auth === "string" ? b.keys.auth : "";
-    if (!endpoint.startsWith("https://") || endpoint.length > 2000 || !p256dh || !auth) return json(res, 400, { error: "bad subscription" });
+    if (!endpointOk(endpoint) || endpoint.length > 2000 || !p256dh || !auth) return json(res, 400, { error: "bad subscription" });
     db.prepare("INSERT INTO push_sub(endpoint,p256dh,auth,created) VALUES(?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth").run(endpoint, p256dh, auth, Date.now());
     return json(res, 200, { ok: true });
   }
@@ -732,10 +771,17 @@ async function rackApi(req, res, url) {
   if (url.startsWith("/rack/api/doc/") && m === "PUT") {
     const key = url.slice("/rack/api/doc/".length);
     if (!RB_PATH_RE.test(key)) return json(res, 404, { error: "not found" });
-    const doc = await readBody(req, 1_000_000);
+    // { doc, ver }: ver is the doc-level version the client last saw (from a prior GET/PUT
+    // response), so two devices editing the same doc within the same poll window get a 409
+    // instead of silently clobbering each other — the gap /rack/api/state's single global
+    // `ver` doesn't close, since that only tells a client *something* changed, not which doc.
+    const b = await readBody(req, 1_000_000);
+    const doc = b.doc;
     if (!doc || typeof doc !== "object" || Array.isArray(doc) || tooDeep(doc)) return json(res, 400, { error: "bad json" });
-    RB.docs[key] = doc; RB.ver = (RB.ver || 0) + 1; saveRb();
-    return json(res, 200, { ver: RB.ver });
+    const curVer = RB.docVers[key] || 0;
+    if (b.ver !== undefined && b.ver !== curVer) return json(res, 409, { error: "stale", ver: curVer, doc: RB.docs[key] });
+    RB.docs[key] = doc; RB.docVers[key] = curVer + 1; RB.ver = (RB.ver || 0) + 1; saveRb();
+    return json(res, 200, { ver: RB.ver, docVer: RB.docVers[key] });
   }
   return json(res, 404, { error: "not found" });
 }
@@ -747,9 +793,9 @@ const server = http.createServer(async (req, res) => {
 
     if (p.startsWith("/api/") || p.startsWith("/rack/api/") || p.startsWith("/hrt/api/")) {
       if (m !== "GET" && m !== "HEAD") {
-        // CSRF: same-origin only (plus SameSite=Strict cookie)
+        // CSRF: same-origin only (plus SameSite=Strict cookie, the primary defense)
         const o = req.headers.origin;
-        if (o && new URL(o).host !== req.headers.host) return json(res, 403, { error: "bad origin" });
+        if (!o || new URL(o).host !== req.headers.host) return json(res, 403, { error: "bad origin" });
         if (!(req.headers["content-type"] || "").startsWith("application/json")) return json(res, 415, { error: "json only" });
       }
       if (p.startsWith("/api/auth/")) return await authApi(req, res, p);

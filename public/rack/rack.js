@@ -492,12 +492,21 @@ function setSync(){const kl=$("kioskLink");if(kl)kl.hidden=!(LIVE&&LIVE.apps&&LI
   $("sync").textContent=SRV?(LIVE&&LIVE.docker?"Running on your NAS · live stats on":"Running on your NAS"):DB?"Synced: orders, prices and apps save to this page":dbState==="off"?"Saving in this browser only":"Connecting…"}
 /* ---------- storage: TrueNAS server or claude.ai page db ---------- */
 let SRV=false,LIVE=null;
-function makeServerDB(){const subs=[];let cache={},ver=-1;
+function makeServerDB(){const subs=[];let cache={},docVer={},ver=-1;
   const snap=p=>({id:p.split("/").pop(),exists:Object.prototype.hasOwnProperty.call(cache,p),data:()=>cache[p]});
   const fire=()=>subs.forEach(f=>{try{f()}catch(e){}});
-  async function pull(){try{const r=await fetch("api/state",{cache:"no-store"});if(!r.ok)return;const j=await r.json();if(j.ver!==ver){ver=j.ver;cache=j.docs||{};fire()}}catch(e){}}
+  async function pull(){try{const r=await fetch("api/state",{cache:"no-store"});if(!r.ok)return;const j=await r.json();if(j.ver!==ver){ver=j.ver;cache=j.docs||{};docVer=j.docVers||{};fire()}}catch(e){}}
   const db={ready:pull(),
-    doc(p){return{async set(d){cache[p]=JSON.parse(JSON.stringify(d));const r=await fetch("api/doc/"+p,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});if(!r.ok)throw{code:"unavailable"};const j=await r.json();ver=j.ver;fire()},
+    doc(p){return{async set(d){
+        // ver: the doc-level version this tab last saw for p, so the server can tell two
+        // devices apart editing the same doc and 409 instead of one silently overwriting
+        // the other. On a 409 the server hands back its current value, which we adopt here
+        // (and notify subscribers of) so the NEXT save isn't just rejected again.
+        const r=await fetch("api/doc/"+p,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({doc:d,ver:docVer[p]})});
+        const j=await r.json().catch(()=>({}));
+        if(r.status===409){if("doc" in j)cache[p]=j.doc;if(j.ver!=null)docVer[p]=j.ver;fire();throw{code:"conflict"}}
+        if(!r.ok)throw{code:"unavailable"};
+        cache[p]=JSON.parse(JSON.stringify(d));docVer[p]=j.docVer;ver=j.ver;fire()},
       async get(){return snap(p)},
       onSnapshot(cb){const f=()=>cb(snap(p));subs.push(f);f();return()=>{}}}},
     collection(n){return{onSnapshot(cb){const f=()=>{const docs=Object.keys(cache).filter(k=>k.startsWith(n+"/")&&k.split("/").length===2).map(snap);cb({docs,size:docs.length,empty:!docs.length})};subs.push(f);f();return()=>{}}}}};
