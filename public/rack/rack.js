@@ -179,7 +179,7 @@ const KEY="rackBuilder.v32";
 function load(){try{const r=localStorage.getItem(KEY);if(r)return JSON.parse(r)}catch(e){}return {active:"upgrade",builds:presets()}}
 let planTimer=null,planLoaded=false;
 function save(){try{localStorage.setItem(KEY,JSON.stringify(W))}catch(e){}
-  if(DB&&planLoaded){clearTimeout(planTimer);planTimer=setTimeout(()=>{DB.doc("plan/state").set({key:KEY,w:JSON.parse(JSON.stringify(W))}).catch(()=>{})},1500)}}
+  if(DB&&planLoaded){clearTimeout(planTimer);planTimer=setTimeout(()=>{DB.doc("plan/state").set({key:KEY,w:JSON.parse(JSON.stringify(W))}).catch(e=>{if(e&&e.code==="conflict")flash("This build changed on another device. Reload the page to see the latest, then redo your change.")})},1500)}}
 W=load();S=W.builds[W.active];
 
 const $=id=>document.getElementById(id);
@@ -340,7 +340,7 @@ document.addEventListener("toggle",e=>{const d=e.target;if(!d.dataset||!d.datase
 document.addEventListener("change",e=>{const el=e.target,d=el.dataset||{};
   if(d.ost){const p={status:el.value};const o=ordOf(d.ost);if(el.value!=="planned"&&!o.date)p.date=new Date().toISOString().slice(0,10);setOrd(d.ost,p)}
   else if(d.of){let v=el.value;if(d.k==="paid")v=v===""?"":Math.max(0,+v||0);setOrd(d.of,{[d.k]:v})}
-  else if(el.id==="perCheck"){perCheck=Math.max(0,+el.value||0);try{localStorage.setItem("rb.perCheck",perCheck)}catch(e){}if(DB)DB.doc("settings/budget").set({perCheck}).catch(()=>{});render()}
+  else if(el.id==="perCheck"){perCheck=Math.max(0,+el.value||0);try{localStorage.setItem("rb.perCheck",perCheck)}catch(e){}if(DB)DB.doc("settings/budget").set({perCheck}).catch(e=>{if(e&&e.code==="conflict")flash("Budget setting changed on another device. Reload the page to see the latest.")});render()}
 });
 document.addEventListener("click",e=>{const b=e.target.closest("[data-od]");if(!b)return;const id=b.dataset.od;openOrd.has(id)?openOrd.delete(id):openOrd.add(id);render()});
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -495,7 +495,13 @@ let SRV=false,LIVE=null;
 function makeServerDB(){const subs=[];let cache={},docVer={},ver=-1;
   const snap=p=>({id:p.split("/").pop(),exists:Object.prototype.hasOwnProperty.call(cache,p),data:()=>cache[p]});
   const fire=()=>subs.forEach(f=>{try{f()}catch(e){}});
-  async function pull(){try{const r=await fetch("api/state",{cache:"no-store"});if(!r.ok)return;const j=await r.json();if(j.ver!==ver){ver=j.ver;cache=j.docs||{};docVer=j.docVers||{};fire()}}catch(e){}}
+  // j.ver>ver, not !==: ver only ever increases (every write bumps it, never resets within a
+  // dataset's lifetime), so this is a monotonic check, not just a change check. That matters
+  // now that docVer gates future writes — two concurrent fetches (this poll + an in-flight
+  // .set()) can have their responses arrive out of send order, and an out-of-order !== would
+  // apply a GET captured before a PUT this tab itself just made, rolling docVer back and
+  // causing a spurious 409 on the next save of that doc.
+  async function pull(){try{const r=await fetch("api/state",{cache:"no-store"});if(!r.ok)return;const j=await r.json();if(j.ver>ver){ver=j.ver;cache=j.docs||{};docVer=j.docVers||{};fire()}}catch(e){}}
   const db={ready:pull(),
     doc(p){return{async set(d){
         // ver: the doc-level version this tab last saw for p, so the server can tell two
