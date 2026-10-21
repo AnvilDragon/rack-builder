@@ -771,15 +771,17 @@ async function rackApi(req, res, url) {
   if (url.startsWith("/rack/api/doc/") && m === "PUT") {
     const key = url.slice("/rack/api/doc/".length);
     if (!RB_PATH_RE.test(key)) return json(res, 404, { error: "not found" });
-    // { doc, ver }: ver is the doc-level version the client last saw (from a prior GET/PUT
-    // response), so two devices editing the same doc within the same poll window get a 409
-    // instead of silently clobbering each other — the gap /rack/api/state's single global
-    // `ver` doesn't close, since that only tells a client *something* changed, not which doc.
+    // Accepts either { doc, ver } — ver is the doc-level version the client last saw, so two
+    // devices editing the same doc within the same poll window get a 409 instead of silently
+    // clobbering each other — or, for backward compatibility with any caller still sending the
+    // raw doc as the whole body (no wrapper), that body as-is with no conflict check, exactly
+    // the prior unconditional-overwrite behavior.
     const b = await readBody(req, 1_000_000);
-    const doc = b.doc;
+    const wrapped = b && typeof b === "object" && "doc" in b && b.doc && typeof b.doc === "object" && !Array.isArray(b.doc);
+    const doc = wrapped ? b.doc : b;
     if (!doc || typeof doc !== "object" || Array.isArray(doc) || tooDeep(doc)) return json(res, 400, { error: "bad json" });
     const curVer = RB.docVers[key] || 0;
-    if (b.ver !== undefined && b.ver !== curVer) return json(res, 409, { error: "stale", ver: curVer, doc: RB.docs[key] });
+    if (wrapped && b.ver !== undefined && b.ver !== curVer) return json(res, 409, { error: "stale", ver: curVer, doc: RB.docs[key] });
     RB.docs[key] = doc; RB.docVers[key] = curVer + 1; RB.ver = (RB.ver || 0) + 1; saveRb();
     return json(res, 200, { ver: RB.ver, docVer: RB.docVers[key] });
   }
@@ -793,9 +795,13 @@ const server = http.createServer(async (req, res) => {
 
     if (p.startsWith("/api/") || p.startsWith("/rack/api/") || p.startsWith("/hrt/api/")) {
       if (m !== "GET" && m !== "HEAD") {
-        // CSRF: same-origin only (plus SameSite=Strict cookie, the primary defense)
+        // CSRF: same-origin only when Origin is sent (plus SameSite=Strict cookie, the actual
+        // primary defense — a cross-site request never carries the cookie regardless of Origin).
+        // Requiring Origin outright was tried and reverted: plenty of legitimate same-origin
+        // requests (curl, this repo's own CI smoke/attack suite, some fetch configurations)
+        // don't send it, and SameSite=Strict already makes its absence harmless here.
         const o = req.headers.origin;
-        if (!o || new URL(o).host !== req.headers.host) return json(res, 403, { error: "bad origin" });
+        if (o && new URL(o).host !== req.headers.host) return json(res, 403, { error: "bad origin" });
         if (!(req.headers["content-type"] || "").startsWith("application/json")) return json(res, 415, { error: "json only" });
       }
       if (p.startsWith("/api/auth/")) return await authApi(req, res, p);
