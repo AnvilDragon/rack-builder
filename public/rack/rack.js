@@ -109,15 +109,13 @@ function presetsRaw(){const P=(n,x)=>({...x,ph:n});return {
       9:"Install 2 drives and create a mirror pool. Set up a replication task on the NAS that sends its snapshots here, and point Minecraft backups at it.",
       10:"Add 2 more drives as a second mirror to the same pool. This doubles the space with no rebuild.",
       11:"Install an SFP+ card in your husband's PC, run his fiber cord, and mount the LC panel at U22.",
-      12:"Swap the NAS's single-port card for the dual-port X710. Keep the old card as a spare or sell it.",
-      13:"Only when your ISP offers 10G. Mount the router at U17, then give the Minecraft host its SFP+ card and DAC.",
       12:"Move everything from the open rack into the closed SRF 27.6.10, keeping the same U positions. Its fans, PDU and shelf come with it. The empty open rack becomes rack 2 for the gaming PCs.",
       13:"Install OPNsense on the Protectli and put it on the shelf at U17 in place of your current router. Plug the modem into its WAN port and your fiber switch into one of its SFP+ ports, so it is already ready for 10G internet. Turn on CrowdSec to block scanners and brute-force attempts. Real DDoS protection still comes from TCPShield or a Cloudflare tunnel in front of anything public.",
       15:"Set up the old open rack as rack 2 near a different breaker from rack 1. Size this UPS to both gaming PCs' real power draw before buying.",
       16:"Move each gaming PC into its 4U case. Check each GPU's length against the case first.",
       17:"Run fiber DisplayPort cables and the USB-over-fiber extender to your desk, then add powered hubs there.",
       18:"Same as step 15, for your husband's desk.",
-      19:"Nothing here is needed to finish rack 1. The experiment box is a used mini PC for Proxmox, so you can try things like the Pi-hole + Unbound project without touching the NAS. The NAS card upgrade is a nice-to-have, and the 10G internet parts only matter once your ISP offers 10G. Buy any of it whenever you want."},
+      19:"Nothing here is needed to finish rack 1. The experiment box is a used mini PC for Proxmox, so you can try things like the Pi-hole + Unbound project without touching the NAS. The NAS card upgrade (swap the single-port card for the dual-port X710, keeping the old one as a spare or to sell) is a nice-to-have, and the 10G internet parts only matter once your ISP offers 10G - mount the router at U17 and give the Minecraft host its SFP+ card and DAC once it does. Buy any of it whenever you want."},
     phases:{1:"1: UPS",2:"2: Cabinet",3:"3: Rack the NAS",4:"4: Rack the Minecraft host",6:"5: First fiber link (NAS to your PC)",7:"6: Fiber switch",
       8:"7: Storage + backup server",9:"8: First 2 drives (mirror)",10:"9: Next 2 drives",11:"10: Husband's PC on fiber",12:"11: Closed cabinet",13:"12: Firewall (OPNsense)",
       15:"13: Rack 2 UPS",16:"14: Gaming PC cases",17:"15: Your PC fiber video + USB",18:"16: Husband's PC fiber video + USB",19:"Later / optional"},items:[
@@ -377,7 +375,7 @@ $("reset").addEventListener("click",e=>{
 });
 $("copy").addEventListener("click",()=>{
   const R=rack();const lines=[LABEL[W.active],`${R.name} (${R.u}U) - ${money(R.p)}`];
-  let lp=0;[...S.items].sort((a,b)=>((a.ph||1)-(b.ph||1))||((b.pos||-1)-(a.pos||-1))).forEach(i=>(i.ph||1)!==lp&&lines.push("",PN(lp=(i.ph||1)))||lines.push(`${i.qty>1?i.qty+"x ":""}${i.name}${i.pos?` [U${i.pos}]`:""} - ${money(i.p*i.qty)}`));
+  let lp=0;[...S.items].sort((a,b)=>((a.ph||1)-(b.ph||1))||((b.pos||-1)-(a.pos||-1))).forEach(i=>{if((i.ph||1)!==lp)lines.push("",PN(lp=(i.ph||1)));lines.push(`${i.qty>1?i.qty+"x ":""}${i.name}${i.pos?` [U${i.pos}]`:""} - ${money(i.p*i.qty)}`)});
   lines.push(`Total: ${$("sT").textContent} | ${$("sW").textContent} | ${$("sE").textContent}`);
   const txt=lines.join("\n");
   const done=()=>{$("copyMsg").textContent="Parts list copied."};

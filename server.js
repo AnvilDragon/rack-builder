@@ -55,7 +55,11 @@ const COLS = [...FIELDS, ...Object.keys(CHECKS), ...Object.keys(ENUMS)];
   for (const c of COLS) if (!have.has(c)) db.exec(`ALTER TABLE entries ADD COLUMN ${c} ${c in CHECKS ? "INTEGER" : c in ENUMS ? "TEXT" : "REAL"}`); }
 const SITES = ["Thigh L", "Thigh R", "Thigh", "Belly", "Glute", "Arm"];
 const DRE = /^\d{4}-\d{2}-\d{2}$/, TRE = /^\d{2}:\d{2}$/;
-const okDate = s => typeof s === "string" && DRE.test(s) && isFinite(Date.parse(s + "T00:00:00Z"));
+// Date.parse rolls an impossible day/month over into the next one instead of rejecting it
+// (2024-02-30 silently becomes 2024-03-01) and still returns a finite timestamp either way, so
+// isFinite() alone can't tell a real date from one that just got corrected underneath it - the
+// original string (what's actually stored as the key) is what has to come back out unchanged.
+const okDate = s => typeof s === "string" && DRE.test(s) && isFinite(Date.parse(s + "T00:00:00Z")) && new Date(s + "T00:00:00Z").toISOString().slice(0, 10) === s;
 const pos = v => { const n = typeof v === "number" ? v : parseFloat(v); return isFinite(n) && n >= 0 && n < 100000 ? n : null; };
 function clean(s) {
   s = s && typeof s === "object" ? s : {};
@@ -266,7 +270,11 @@ async function collect() {
     // rolling buffer and appends just the one new point each poll; /rack/api/live/history below
     // is the one-shot catch-up fetch for a client that doesn't have a buffer yet.
   }
-  for (const key of [...HIST.keys()]) if (!apps.has(key)) HIST.delete(key);
+  // Only prune history for apps confirmed gone — `apps` comes from a failed containerStats()
+  // call too (it's just left empty), and pruning unconditionally against that would wipe every
+  // app's 2-minute history on any single transient Docker API hiccup, not just the ones that
+  // actually stopped.
+  if (ok) for (const key of [...HIST.keys()]) if (!apps.has(key)) HIST.delete(key);
   Object.assign(LIVE, { ts, docker: ok, host: h, containers: ctrs, apps: [...apps.values()], interval: INTERVAL });
 }
 (async function loop() {
@@ -290,6 +298,11 @@ async function fetchPrices() {
   });
   if (!r.ok) throw new Error("github " + r.status);
   const data = await r.json();
+  // A malformed/reformatted prices.json could parse as an array or anything else non-object -
+  // Object.entries() on an array yields numeric-string keys ("0","1",...) that KEY_RE happily
+  // accepts, which would silently create bogus prices/0, prices/1 ... docs instead of failing
+  // loudly the way any other malformed response here does.
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("github: not an object");
   let changed = 0;
   for (const [k, v] of Object.entries(data)) {
     if (KEY_RE.test(k) && v && typeof v === "object" && !Array.isArray(v) && typeof v.price === "number") {
@@ -834,12 +847,22 @@ async function rackApi(req, res, url) {
     // so treating that as unconditional-overwrite would silently defeat the whole feature on
     // every doc's first post-upgrade save. A caller sending the raw doc as the whole body (no
     // wrapper) still gets the prior unconditional-overwrite behavior, matching callers from
-    // before this. Which shape a request is is decided by a header the new client sets, not by
-    // sniffing whether the body happens to contain a "doc" key — a raw document can legitimately
-    // have its own field called "doc" (or any other name this heuristic might pick), and reading
-    // that as the wrapper would silently keep only that one field and drop every sibling.
+    // before this.
+    //
+    // Detecting the shape: the X-Doc-Format header is the primary, unambiguous signal the
+    // current client sets. But a browser tab can be running an OLDER client for a while after
+    // this server redeploys (nothing forces a page reload) — specifically the version that sent
+    // { doc, ver } without this header, which every rack-builder release before this one did.
+    // Treating that as "unwrapped" (as a header-only check would) stores the literal wrapper
+    // object as the document, corrupting it on that tab's very next save. So without the
+    // header, still recognize the wrapper by its exact shape: an object whose ONLY two keys are
+    // "doc" and "ver" — exactly what every real { doc, ver } caller, old or new, actually sends,
+    // and narrow enough that a genuine raw document would have to coincidentally consist of
+    // nothing but those two fields and nothing else to collide with it (unlike just checking
+    // for a "doc" key, which any raw document with an unrelated field by that name would hit).
     const b = await readBody(req, 1_000_000);
-    const wrapped = req.headers["x-doc-format"] === "wrapped" && b && typeof b === "object" && !Array.isArray(b);
+    const looksWrapped = b && typeof b === "object" && !Array.isArray(b) && Object.keys(b).length === 2 && "doc" in b && "ver" in b;
+    const wrapped = (req.headers["x-doc-format"] === "wrapped" || looksWrapped) && b && typeof b === "object" && !Array.isArray(b);
     const doc = wrapped ? b.doc : b;
     if (!doc || typeof doc !== "object" || Array.isArray(doc) || tooDeep(doc)) return json(res, 400, { error: "bad json" });
     const curVer = RB.docVers[key] || 0;

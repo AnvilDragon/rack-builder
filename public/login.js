@@ -1,11 +1,21 @@
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var mode = "login"; // "login" | "setup" | "reset"
-  // Only same-site paths: never follow ?next=//evil.com or ?next=https://...
+  // Only same-site paths: never follow ?next=//evil.com or ?next=https://... A character-based
+  // check here is the wrong shape for this — a tab, newline or CR at the position right after
+  // the leading "/" isn't "/" or "\" either, so it used to pass, but the URL parser location.
+  // replace() itself uses strips those characters before resolving, collapsing a value like
+  // "/\t/evil.example" into "//evil.example" (host "evil.example") underneath the check that
+  // just approved it. Resolving the value the same way the browser actually will, and checking
+  // the real resulting origin, closes that and anything shaped like it in one step.
   function nextUrl() {
     var n = new URLSearchParams(location.search).get("next") || "";
-    var bs = String.fromCharCode(92); // backslash
-    return n.charAt(0) === "/" && n.charAt(1) !== "/" && n.charAt(1) !== bs ? n : "/rack/";
+    if (n.charAt(0) !== "/") return "/rack/";
+    try {
+      var resolved = new URL(n, location.origin);
+      if (resolved.origin === location.origin) return resolved.href;
+    } catch (e) {}
+    return "/rack/";
   }
   function show(m) {
     mode = m;
