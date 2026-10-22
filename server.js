@@ -11,6 +11,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const zlib = require("node:zlib");
 const crypto = require("node:crypto");
+const dns = require("node:dns/promises");
 const { DatabaseSync } = require("node:sqlite");
 
 const PORT = +process.env.PORT || 8080;
@@ -128,11 +129,12 @@ function writeState(raw) {
 const RB_STATE = path.join(DATA_DIR, "state.json");
 const RB_PATH_RE = /^[A-Za-z0-9_\-.]{1,64}\/[A-Za-z0-9_\-.:@+~]{1,200}$/;
 const KEY_RE = /^[A-Za-z0-9_\-.]{1,64}$/;
-let RB = { ver: 0, docs: {} };
+let RB = { ver: 0, docs: {}, docVers: {} };
 try {
   const d = JSON.parse(fs.readFileSync(RB_STATE, "utf8"));
   if (d && typeof d.docs === "object" && d.docs && !Array.isArray(d.docs)) RB = d;
 } catch {}
+if (!RB.docVers || typeof RB.docVers !== "object" || Array.isArray(RB.docVers)) RB.docVers = {}; // older state.json files predate per-doc versions
 function saveRb() {
   const tmp = RB_STATE + ".tmp";
   fs.writeFileSync(tmp, JSON.stringify(RB));
@@ -292,7 +294,10 @@ async function fetchPrices() {
   for (const [k, v] of Object.entries(data)) {
     if (KEY_RE.test(k) && v && typeof v === "object" && !Array.isArray(v) && typeof v.price === "number") {
       const key = "prices/" + k;
-      if (JSON.stringify(RB.docs[key]) !== JSON.stringify(v)) { RB.docs[key] = v; changed++; }
+      // Bump docVers alongside docs here too — this is the only other writer of RB.docs besides
+      // the /rack/api/doc/ PUT handler, and the version-conflict check that handler enforces
+      // relies on docVers tracking every write to docs, not just ones that went through it.
+      if (JSON.stringify(RB.docs[key]) !== JSON.stringify(v)) { RB.docs[key] = v; RB.docVers[key] = (RB.docVers[key] || 0) + 1; changed++; }
     }
   }
   if (changed) { RB.ver = (RB.ver || 0) + 1; saveRb(); }
@@ -366,9 +371,38 @@ const authed = req => hasUser() && !!sessionHash(req);
 // before starting the next one, reserve() being synchronous and ahead of every `await` here
 // means the Nth concurrent request really does see the first N-1 reservations already counted.
 const fails = new Map();
-const ipOf = req => req.socket.remoteAddress || "?";
+// Caddy's https-proxy terminates every HTTPS client's own connection and opens its own to this
+// server, so req.socket.remoteAddress alone is Caddy's address for ALL proxied traffic —
+// collapsing every real client onto one IP and letting anyone trigger a lockout that hits every
+// other HTTPS user too. X-Forwarded-For is only trusted when it arrives with the shared secret
+// Caddy injects (see compose.yaml's https-proxy command), which a request hitting the direct
+// :30251 port can't forge without reading that file out of the container.
+const PROXY_SECRET_FILE = path.join(DATA_DIR, "caddy", "proxy-secret.txt");
+let proxySecretCache = null;
+function proxySecret() {
+  if (proxySecretCache) return proxySecretCache;
+  try { return (proxySecretCache = fs.readFileSync(PROXY_SECRET_FILE, "utf8").trim()); } catch { return ""; }
+}
+const ipOf = req => {
+  const hdr = req.headers["x-proxy-secret"], secret = proxySecret();
+  if (hdr && secret && sameSecret(hdr, secret)) {
+    const xff = req.headers["x-forwarded-for"];
+    if (xff) return xff.split(",")[0].trim();
+  }
+  return req.socket.remoteAddress || "?";
+};
 function locked(ip) { const f = fails.get(ip); return !!f && f.until > Date.now(); }
-function reserve(ip) { const f = fails.get(ip) || { n: 0, until: 0 }; if (++f.n >= 5) { f.until = Date.now() + 15 * 60e3; f.n = 0; } fails.set(ip, f); }
+function reserve(ip) {
+  const f = fails.get(ip) || { n: 0, until: 0 };
+  if (++f.n >= 5) { f.until = Date.now() + 15 * 60e3; f.n = 0; }
+  f.seen = Date.now();
+  fails.set(ip, f);
+  // Prune by last-activity age, not just "already locked and the lockout expired" — an entry
+  // sitting at 1-4 failures (until stays 0, so the old check here never touched it) is still
+  // stale an hour after its last attempt and should go too, or the map only ever grows for
+  // every distinct source address that's ever failed once.
+  if (fails.size > 1000) for (const [k, v] of fails) if (v.seen < Date.now() - 3600e3) fails.delete(k);
+}
 const cleared = ip => fails.delete(ip);
 
 // =====================================================================================
@@ -658,6 +692,39 @@ async function authApi(req, res, url) {
   return json(res, 404, { error: "not found" });
 }
 
+// Reject private/loopback/link-local hosts so an authenticated subscribe can't be used to make
+// this server fetch internal addresses once a day (SSRF-adjacent) — single-user and auth-only
+// already, but there's no reason to accept it either.
+function isPrivateHost(h) {
+  h = h.toLowerCase();
+  if (h.startsWith("[") && h.endsWith("]")) h = h.slice(1, -1); // IPv6 literal from a URL's host
+  if (h === "localhost" || h === "0.0.0.0" || h === "::" || h === "::1") return true;
+  if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
+  if (/^fe80:/.test(h)) return true; // IPv6 link-local
+  if (/^f[cd][0-9a-f]{2}:/.test(h)) return true; // IPv6 unique-local, fc00::/7
+  const mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/); // IPv4-mapped IPv6
+  if (mapped) return isPrivateHost(mapped[1]);
+  return false;
+}
+async function endpointOk(u) {
+  let x; try { x = new URL(u); } catch { return false; }
+  if (x.protocol !== "https:") return false;
+  if (isPrivateHost(x.hostname)) return false;
+  // A plain hostname-string check can't catch a domain that simply resolves to an internal
+  // address (DNS rebinding's starting case, not even the sneaky after-the-fact kind) — resolve
+  // it now and reject if any A/AAAA record is private. This doesn't close the narrower race
+  // where the record changes between this check and the actual push later, which would need
+  // pinning the resolved IP through to the real fetch() in sendPush(); not worth the complexity
+  // this zero-dependency codebase would need for a single-user, auth-only endpoint — the
+  // realistic case (an ordinary name quietly pointing somewhere it shouldn't) is what this closes.
+  try {
+    const addrs = await dns.lookup(x.hostname, { all: true });
+    if (addrs.some(a => isPrivateHost(a.address))) return false;
+  } catch { return false; } // can't resolve it, so can't confirm it's safe — reject
+  return true;
+}
+
 async function hrtApi(req, res, url, q) {
   const m = req.method;
   if (url === "/hrt/api/state" && m === "GET") return json(res, 200, { rev: getRev(), state: readState() });
@@ -670,6 +737,7 @@ async function hrtApi(req, res, url, q) {
   if (url === "/hrt/api/import" && m === "POST") {
     const b = await readBody(req), s = b.state || b;
     if (!s || !Array.isArray(s.entries) || !Array.isArray(s.shots) || !Array.isArray(s.labs)) return json(res, 400, { error: "That file isn't an HRT Log export." });
+    if (b.rev !== undefined && b.rev !== getRev()) return json(res, 409, { error: "stale", rev: getRev() });
     return json(res, 200, { rev: writeState(s) });
   }
   if (url === "/hrt/api/export" && m === "GET") {
@@ -692,7 +760,7 @@ async function hrtApi(req, res, url, q) {
     const endpoint = typeof b.endpoint === "string" ? b.endpoint : "";
     const p256dh = b.keys && typeof b.keys.p256dh === "string" ? b.keys.p256dh : "";
     const auth = b.keys && typeof b.keys.auth === "string" ? b.keys.auth : "";
-    if (!endpoint.startsWith("https://") || endpoint.length > 2000 || !p256dh || !auth) return json(res, 400, { error: "bad subscription" });
+    if (endpoint.length > 2000 || !p256dh || !auth || !(await endpointOk(endpoint))) return json(res, 400, { error: "bad subscription" });
     db.prepare("INSERT INTO push_sub(endpoint,p256dh,auth,created) VALUES(?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth").run(endpoint, p256dh, auth, Date.now());
     return json(res, 200, { ok: true });
   }
@@ -732,10 +800,21 @@ async function rackApi(req, res, url) {
   if (url.startsWith("/rack/api/doc/") && m === "PUT") {
     const key = url.slice("/rack/api/doc/".length);
     if (!RB_PATH_RE.test(key)) return json(res, 404, { error: "not found" });
-    const doc = await readBody(req, 1_000_000);
+    // Accepts either { doc, ver } — ver is the doc-level version the client last saw, with a
+    // missing ver meaning "I've never seen a version for this key", which must mean 0, not
+    // "skip the check": the first write after this feature shipped (or the first write to a
+    // brand-new key) is exactly when two devices are most likely to both be ver-less at once,
+    // so treating that as unconditional-overwrite would silently defeat the whole feature on
+    // every doc's first post-upgrade save. Any body without a "doc" key at all (raw old-format)
+    // still gets the prior unconditional-overwrite behavior, matching callers from before this.
+    const b = await readBody(req, 1_000_000);
+    const wrapped = b && typeof b === "object" && !Array.isArray(b) && "doc" in b;
+    const doc = wrapped ? b.doc : b;
     if (!doc || typeof doc !== "object" || Array.isArray(doc) || tooDeep(doc)) return json(res, 400, { error: "bad json" });
-    RB.docs[key] = doc; RB.ver = (RB.ver || 0) + 1; saveRb();
-    return json(res, 200, { ver: RB.ver });
+    const curVer = RB.docVers[key] || 0;
+    if (wrapped && (b.ver === undefined ? 0 : b.ver) !== curVer) return json(res, 409, { error: "stale", ver: curVer, doc: RB.docs[key] });
+    RB.docs[key] = doc; RB.docVers[key] = curVer + 1; RB.ver = (RB.ver || 0) + 1; saveRb();
+    return json(res, 200, { ver: RB.ver, docVer: RB.docVers[key] });
   }
   return json(res, 404, { error: "not found" });
 }
@@ -747,9 +826,18 @@ const server = http.createServer(async (req, res) => {
 
     if (p.startsWith("/api/") || p.startsWith("/rack/api/") || p.startsWith("/hrt/api/")) {
       if (m !== "GET" && m !== "HEAD") {
-        // CSRF: same-origin only (plus SameSite=Strict cookie)
+        // CSRF: same-origin only when Origin is sent (plus SameSite=Strict cookie, the actual
+        // primary defense — a cross-site request never carries the cookie regardless of Origin).
+        // Requiring Origin outright was tried and reverted: plenty of legitimate same-origin
+        // requests (curl, this repo's own CI smoke/attack suite, some fetch configurations)
+        // don't send it, and SameSite=Strict already makes its absence harmless here.
         const o = req.headers.origin;
-        if (o && new URL(o).host !== req.headers.host) return json(res, 403, { error: "bad origin" });
+        // A real browser can send a non-empty, non-URL Origin ("null", from a sandboxed iframe
+        // or other opaque-origin context) — new URL() throws on that, so this can't assume o is
+        // parseable just because it's truthy. Anything unparseable is cross-site by definition.
+        let originOk = true;
+        if (o) { try { originOk = new URL(o).host === req.headers.host; } catch { originOk = false; } }
+        if (!originOk) return json(res, 403, { error: "bad origin" });
         if (!(req.headers["content-type"] || "").startsWith("application/json")) return json(res, 415, { error: "json only" });
       }
       if (p.startsWith("/api/auth/")) return await authApi(req, res, p);

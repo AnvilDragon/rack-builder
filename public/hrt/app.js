@@ -328,8 +328,10 @@
     if(ev.target.id!=="imp"||!ev.target.files[0])return;
     var f=ev.target.files[0];
     if(!confirm("Replace everything in the log with this file?")){ev.target.value="";return}
-    f.text().then(function(t){var j=JSON.parse(t);return call("POST","api/import",j)}).then(function(r){
-      if(r.ok)return load().then(function(){setMsg("Imported.")});setData(r.data.error||"Import failed.")}).catch(function(){setData("That file isn't valid JSON.")});
+    f.text().then(function(t){var j=JSON.parse(t);return call("POST","api/import",{state:j.state||j,rev:rev})}).then(function(r){
+      if(r.ok)return load().then(function(){setMsg("Imported.")});
+      if(r.status===409){setData("This log changed on another device. Reload the page, then import again.");return}
+      setData(r.data.error||"Import failed.")}).catch(function(){setData("That file isn't valid JSON.")});
   });
 
   if("serviceWorker" in navigator)navigator.serviceWorker.getRegistration().then(function(reg){return reg&&reg.pushManager.getSubscription()}).then(function(sub){if(sub){pushSubscribed=true;if(tab==="data")render()}}).catch(function(){});
