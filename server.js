@@ -701,10 +701,23 @@ function isPrivateHost(h) {
   if (h === "localhost" || h === "0.0.0.0" || h === "::" || h === "::1") return true;
   if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true; // 100.64.0.0/10, CGNAT (Tailscale's default range)
+  if (/^192\.0\.0\./.test(h)) return true; // 192.0.0.0/24, IETF protocol assignments
+  if (/^198\.(1[89])\./.test(h)) return true; // 198.18.0.0/15, benchmarking
   if (/^fe80:/.test(h)) return true; // IPv6 link-local
   if (/^f[cd][0-9a-f]{2}:/.test(h)) return true; // IPv6 unique-local, fc00::/7
-  const mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/); // IPv4-mapped IPv6
-  if (mapped) return isPrivateHost(mapped[1]);
+  // IPv4-mapped IPv6, dotted-decimal form (::ffff:a.b.c.d) — what a caller might type directly.
+  const dotted = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) return isPrivateHost(dotted[1]);
+  // IPv4-mapped IPv6, hex-group form (::ffff:HHHH:HHHH) — what the WHATWG URL parser actually
+  // produces for a mapped literal (confirmed: new URL("https://[::ffff:127.0.0.1]/").hostname
+  // is "[::ffff:7f00:1]", never the dotted form) — so the check above alone never fires for a
+  // URL-derived hostname; only dns.lookup's own, separate re-normalization happened to catch it.
+  const hexMapped = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMapped) {
+    const hi = parseInt(hexMapped[1], 16), lo = parseInt(hexMapped[2], 16);
+    return isPrivateHost([(hi >> 8) & 255, hi & 255, (lo >> 8) & 255, lo & 255].join("."));
+  }
   return false;
 }
 async function endpointOk(u) {
@@ -719,7 +732,17 @@ async function endpointOk(u) {
   // this zero-dependency codebase would need for a single-user, auth-only endpoint — the
   // realistic case (an ordinary name quietly pointing somewhere it shouldn't) is what this closes.
   try {
-    const addrs = await dns.lookup(x.hostname, { all: true });
+    // dns.lookup's own "timeout" option is a documented no-op (confirmed: a 1ms timeout still
+    // resolves normally) and it has no AbortSignal support, so a non-responding resolver would
+    // hang this request's HTTP response forever with nothing else in the request path bounding
+    // it. Racing it against a plain timer frees the response either way; it can't reclaim the
+    // libuv thread the real lookup still occupies until the OS resolver itself gives up, but
+    // this is a single authenticated-only endpoint with no realistic way to stack enough
+    // concurrent hangs through it to matter.
+    const addrs = await Promise.race([
+      dns.lookup(x.hostname, { all: true }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("dns timeout")), 5000)),
+    ]);
     if (addrs.some(a => isPrivateHost(a.address))) return false;
   } catch { return false; } // can't resolve it, so can't confirm it's safe — reject
   return true;
@@ -737,7 +760,11 @@ async function hrtApi(req, res, url, q) {
   if (url === "/hrt/api/import" && m === "POST") {
     const b = await readBody(req), s = b.state || b;
     if (!s || !Array.isArray(s.entries) || !Array.isArray(s.shots) || !Array.isArray(s.labs)) return json(res, 400, { error: "That file isn't an HRT Log export." });
-    if (b.rev !== undefined && b.rev !== getRev()) return json(res, 409, { error: "stale", rev: getRev() });
+    // A missing rev means 0, not "skip the check" — the same bug class fixed for rack docs:
+    // the real client always sends its current rev, so this only matters for a caller that
+    // doesn't, and silently overwriting real data because a conflict check got skipped is
+    // worse than a 409 a true first-ever import (rev really is 0) still passes cleanly.
+    if ((b.rev === undefined ? 0 : b.rev) !== getRev()) return json(res, 409, { error: "stale", rev: getRev() });
     return json(res, 200, { rev: writeState(s) });
   }
   if (url === "/hrt/api/export" && m === "GET") {
@@ -805,10 +832,14 @@ async function rackApi(req, res, url) {
     // "skip the check": the first write after this feature shipped (or the first write to a
     // brand-new key) is exactly when two devices are most likely to both be ver-less at once,
     // so treating that as unconditional-overwrite would silently defeat the whole feature on
-    // every doc's first post-upgrade save. Any body without a "doc" key at all (raw old-format)
-    // still gets the prior unconditional-overwrite behavior, matching callers from before this.
+    // every doc's first post-upgrade save. A caller sending the raw doc as the whole body (no
+    // wrapper) still gets the prior unconditional-overwrite behavior, matching callers from
+    // before this. Which shape a request is is decided by a header the new client sets, not by
+    // sniffing whether the body happens to contain a "doc" key — a raw document can legitimately
+    // have its own field called "doc" (or any other name this heuristic might pick), and reading
+    // that as the wrapper would silently keep only that one field and drop every sibling.
     const b = await readBody(req, 1_000_000);
-    const wrapped = b && typeof b === "object" && !Array.isArray(b) && "doc" in b;
+    const wrapped = req.headers["x-doc-format"] === "wrapped" && b && typeof b === "object" && !Array.isArray(b);
     const doc = wrapped ? b.doc : b;
     if (!doc || typeof doc !== "object" || Array.isArray(doc) || tooDeep(doc)) return json(res, 400, { error: "bad json" });
     const curVer = RB.docVers[key] || 0;

@@ -455,7 +455,7 @@ function apImport(txt){const A=apState(),seen={};let n=0,unk=[];
   A.usedAt=new Date().toISOString();renderApps();apSave();
   $("apImp").textContent=`Updated ${Object.keys(seen).length} apps from ${n} containers.`+(unk.length?` Not matched: ${unk.join(", ")} (add them as apps first).`:"")}
 function apRefresh(){$("apRack").innerHTML=apRack();$("apStats").innerHTML=apStats();const l=$("apLive");if(l)l.innerHTML=liveHTML();const c=$("apCards");if(c)c.innerHTML=cardsHTML();setSync()}
-function apSave(){clearTimeout(apTimer);apTimer=setTimeout(()=>{const A=apState();try{localStorage.setItem("rb.apps",JSON.stringify(A))}catch(e){}if(DB)DB.doc("nas/apps").set(JSON.parse(JSON.stringify(A))).then(()=>{const m=$("apMsg");if(m)m.textContent="Saved."}).catch(()=>{const m=$("apMsg");if(m)m.textContent="Couldn't save. Try again in a moment."})},700)}
+function apSave(){clearTimeout(apTimer);apTimer=setTimeout(()=>{const A=apState();try{localStorage.setItem("rb.apps",JSON.stringify(A))}catch(e){}if(DB)DB.doc("nas/apps").set(JSON.parse(JSON.stringify(A))).then(()=>{const m=$("apMsg");if(m)m.textContent="Saved."}).catch(e=>{const m=$("apMsg");if(m)m.textContent=e&&e.code==="conflict"?"This changed on another device. Reload the page to see the latest.":"Couldn't save. Try again in a moment."})},700)}
 $("viewApps").addEventListener("input",e=>{const el=e.target,A=apState();
   if(el.dataset.ah){const k=el.dataset.ah;A.host[k]=el.type==="number"?nz(el.value,0):el.value;apRefresh();apSave();return}
   const r=el.closest(".arow");if(!r||!el.dataset.af)return;const a=A.apps[+r.dataset.ai],k=el.dataset.af;
@@ -508,11 +508,22 @@ function makeServerDB(){const subs=[];let cache={},docVer={},ver=-1;
         // devices apart editing the same doc and 409 instead of one silently overwriting
         // the other. On a 409 the server hands back its current value, which we adopt here
         // (and notify subscribers of) so the NEXT save isn't just rejected again.
-        const r=await fetch("api/doc/"+p,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({doc:d,ver:docVer[p]})});
+        // X-Doc-Format marks this as the new { doc, ver } wrapper shape, unambiguously — not
+        // left for the server to guess from whether the body happens to contain a "doc" key,
+        // which a legitimate raw document could coincidentally have too.
+        const r=await fetch("api/doc/"+p,{method:"PUT",headers:{"Content-Type":"application/json","X-Doc-Format":"wrapped"},body:JSON.stringify({doc:d,ver:docVer[p]})});
         const j=await r.json().catch(()=>({}));
         if(r.status===409){if("doc" in j)cache[p]=j.doc;if(j.ver!=null)docVer[p]=j.ver;fire();throw{code:"conflict"}}
         if(!r.ok)throw{code:"unavailable"};
-        cache[p]=JSON.parse(JSON.stringify(d));docVer[p]=j.docVer;ver=j.ver;fire()},
+        // ver (the global snapshot version) is deliberately left alone here — it's pull()'s
+        // alone to advance, from a real full-state GET. If a single-doc write's response bumped
+        // it too, a slower-but-earlier-sent pull() could arrive after and look "older" by that
+        // inflated number even though this tab never actually merged a full snapshot, and get
+        // silently dropped — permanently stranding every doc this tab never happens to write
+        // itself (plan/state, settings/budget, prices, other orders) missing from cache. Leaving
+        // ver untouched here means the next periodic pull() (<=5s later) picks up this write
+        // along with everything else, through the normal full-snapshot path.
+        cache[p]=JSON.parse(JSON.stringify(d));docVer[p]=j.docVer;fire()},
       async get(){return snap(p)},
       onSnapshot(cb){const f=()=>cb(snap(p));subs.push(f);f();return()=>{}}}},
     collection(n){return{onSnapshot(cb){const f=()=>{const docs=Object.keys(cache).filter(k=>k.startsWith(n+"/")&&k.split("/").length===2).map(snap);cb({docs,size:docs.length,empty:!docs.length})};subs.push(f);f();return()=>{}}}}};

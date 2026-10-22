@@ -272,8 +272,12 @@ jobs:
           curl -sf "$B/healthz" >/dev/null && echo "ok   server still alive after deep JSON" || { echo "FAIL server died after deep JSON"; fail=1; }
           # The Rack doc store keeps the raw parsed body and re-serializes it on every future
           # save and every GET /rack/api/state — a small-but-deep body there must be rejected
-          # up front (400), not accepted and left to break every later read.
-          node -e 'const n=5000; require("fs").writeFileSync("/tmp/deep-rack.json", "[".repeat(n)+"1"+"]".repeat(n))'
+          # up front (400), not accepted and left to break every later read. The payload must be
+          # OBJECT-shaped at the top level, not array-shaped: a bare top-level array is already
+          # rejected by an earlier, depth-independent Array.isArray() guard, so a deep *array*
+          # payload here would still get 400 even with the actual depth check (tooDeep) deleted
+          # entirely — proving nothing about depth checking specifically.
+          node -e 'const n=5000; require("fs").writeFileSync("/tmp/deep-rack.json", "{\"deep\":"+"[".repeat(n)+"1"+"]".repeat(n)+"}")'
           c=$(code -b jar -X PUT "$B/rack/api/doc/attack/deep" -H 'Content-Type: application/json' --data-binary @/tmp/deep-rack.json)
           [ "$c" = "400" ] && echo "ok   deeply nested rack doc rejected up front (400)" || { echo "FAIL deeply nested rack doc -> $c (want 400, not stored)"; fail=1; }
           c=$(code -b jar "$B/rack/api/state")
