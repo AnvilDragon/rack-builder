@@ -29,7 +29,11 @@
   // Whole-number daily checks, each [low, high] inclusive. Booleans are stored as 0/1.
   var CHECKS={mood:[1,5],sting:[0,99],rand:[0,99],arou:[0,99],orgasm:[0,99],symptom:[0,99],libido:[1,5],energy:[1,5],dysphoria:[1,5],skin:[1,5],hair:[1,5],sleepq:[1,5],dht:[0,1],anchor:[0,1],skincare:[0,1]};
   var TENDER=["None","Left","Right","Both"],COMFORT=["Fine","Uncomfortable","Painful"],ENUMS={tender:TENDER,comfort:COMFORT};
-  function okDate(s){return typeof s==="string"&&DRE.test(s)&&isFinite(dn(s))}
+  // dn()/Date.UTC roll an impossible day/month over into the next one instead of rejecting it
+  // (2024-02-30 silently becomes 2024-03-01), so isFinite(dn(s)) alone can't tell a real date
+  // from one that just got corrected underneath it - round-tripping back through ds() and
+  // comparing to the original string catches the rollover.
+  function okDate(s){return typeof s==="string"&&DRE.test(s)&&isFinite(dn(s))&&ds(dn(s))===s}
   function pos(v){var n=num(v);return n!=null&&n>=0&&n<100000?n:null}
   function clean(s){
     s=s&&typeof s==="object"?s:{};var o={start:okDate(s.start)?s.start:"",conc:pos(s.conc)||40,shotEvery:pos(s.shotEvery)||7,

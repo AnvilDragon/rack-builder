@@ -55,7 +55,11 @@ const COLS = [...FIELDS, ...Object.keys(CHECKS), ...Object.keys(ENUMS)];
   for (const c of COLS) if (!have.has(c)) db.exec(`ALTER TABLE entries ADD COLUMN ${c} ${c in CHECKS ? "INTEGER" : c in ENUMS ? "TEXT" : "REAL"}`); }
 const SITES = ["Thigh L", "Thigh R", "Thigh", "Belly", "Glute", "Arm"];
 const DRE = /^\d{4}-\d{2}-\d{2}$/, TRE = /^\d{2}:\d{2}$/;
-const okDate = s => typeof s === "string" && DRE.test(s) && isFinite(Date.parse(s + "T00:00:00Z"));
+// Date.parse rolls an impossible day/month over into the next one instead of rejecting it
+// (2024-02-30 silently becomes 2024-03-01) and still returns a finite timestamp either way, so
+// isFinite() alone can't tell a real date from one that just got corrected underneath it - the
+// original string (what's actually stored as the key) is what has to come back out unchanged.
+const okDate = s => typeof s === "string" && DRE.test(s) && isFinite(Date.parse(s + "T00:00:00Z")) && new Date(s + "T00:00:00Z").toISOString().slice(0, 10) === s;
 const pos = v => { const n = typeof v === "number" ? v : parseFloat(v); return isFinite(n) && n >= 0 && n < 100000 ? n : null; };
 function clean(s) {
   s = s && typeof s === "object" ? s : {};
@@ -266,7 +270,11 @@ async function collect() {
     // rolling buffer and appends just the one new point each poll; /rack/api/live/history below
     // is the one-shot catch-up fetch for a client that doesn't have a buffer yet.
   }
-  for (const key of [...HIST.keys()]) if (!apps.has(key)) HIST.delete(key);
+  // Only prune history for apps confirmed gone — `apps` comes from a failed containerStats()
+  // call too (it's just left empty), and pruning unconditionally against that would wipe every
+  // app's 2-minute history on any single transient Docker API hiccup, not just the ones that
+  // actually stopped.
+  if (ok) for (const key of [...HIST.keys()]) if (!apps.has(key)) HIST.delete(key);
   Object.assign(LIVE, { ts, docker: ok, host: h, containers: ctrs, apps: [...apps.values()], interval: INTERVAL });
 }
 (async function loop() {
@@ -290,6 +298,11 @@ async function fetchPrices() {
   });
   if (!r.ok) throw new Error("github " + r.status);
   const data = await r.json();
+  // A malformed/reformatted prices.json could parse as an array or anything else non-object -
+  // Object.entries() on an array yields numeric-string keys ("0","1",...) that KEY_RE happily
+  // accepts, which would silently create bogus prices/0, prices/1 ... docs instead of failing
+  // loudly the way any other malformed response here does.
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("github: not an object");
   let changed = 0;
   for (const [k, v] of Object.entries(data)) {
     if (KEY_RE.test(k) && v && typeof v === "object" && !Array.isArray(v) && typeof v.price === "number") {
@@ -701,10 +714,23 @@ function isPrivateHost(h) {
   if (h === "localhost" || h === "0.0.0.0" || h === "::" || h === "::1") return true;
   if (/^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) || /^169\.254\./.test(h)) return true;
   if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(h)) return true; // 100.64.0.0/10, CGNAT (Tailscale's default range)
+  if (/^192\.0\.0\./.test(h)) return true; // 192.0.0.0/24, IETF protocol assignments
+  if (/^198\.(1[89])\./.test(h)) return true; // 198.18.0.0/15, benchmarking
   if (/^fe80:/.test(h)) return true; // IPv6 link-local
   if (/^f[cd][0-9a-f]{2}:/.test(h)) return true; // IPv6 unique-local, fc00::/7
-  const mapped = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/); // IPv4-mapped IPv6
-  if (mapped) return isPrivateHost(mapped[1]);
+  // IPv4-mapped IPv6, dotted-decimal form (::ffff:a.b.c.d) — what a caller might type directly.
+  const dotted = h.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (dotted) return isPrivateHost(dotted[1]);
+  // IPv4-mapped IPv6, hex-group form (::ffff:HHHH:HHHH) — what the WHATWG URL parser actually
+  // produces for a mapped literal (confirmed: new URL("https://[::ffff:127.0.0.1]/").hostname
+  // is "[::ffff:7f00:1]", never the dotted form) — so the check above alone never fires for a
+  // URL-derived hostname; only dns.lookup's own, separate re-normalization happened to catch it.
+  const hexMapped = h.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMapped) {
+    const hi = parseInt(hexMapped[1], 16), lo = parseInt(hexMapped[2], 16);
+    return isPrivateHost([(hi >> 8) & 255, hi & 255, (lo >> 8) & 255, lo & 255].join("."));
+  }
   return false;
 }
 async function endpointOk(u) {
@@ -719,7 +745,17 @@ async function endpointOk(u) {
   // this zero-dependency codebase would need for a single-user, auth-only endpoint — the
   // realistic case (an ordinary name quietly pointing somewhere it shouldn't) is what this closes.
   try {
-    const addrs = await dns.lookup(x.hostname, { all: true });
+    // dns.lookup's own "timeout" option is a documented no-op (confirmed: a 1ms timeout still
+    // resolves normally) and it has no AbortSignal support, so a non-responding resolver would
+    // hang this request's HTTP response forever with nothing else in the request path bounding
+    // it. Racing it against a plain timer frees the response either way; it can't reclaim the
+    // libuv thread the real lookup still occupies until the OS resolver itself gives up, but
+    // this is a single authenticated-only endpoint with no realistic way to stack enough
+    // concurrent hangs through it to matter.
+    const addrs = await Promise.race([
+      dns.lookup(x.hostname, { all: true }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("dns timeout")), 5000)),
+    ]);
     if (addrs.some(a => isPrivateHost(a.address))) return false;
   } catch { return false; } // can't resolve it, so can't confirm it's safe — reject
   return true;
@@ -737,7 +773,11 @@ async function hrtApi(req, res, url, q) {
   if (url === "/hrt/api/import" && m === "POST") {
     const b = await readBody(req), s = b.state || b;
     if (!s || !Array.isArray(s.entries) || !Array.isArray(s.shots) || !Array.isArray(s.labs)) return json(res, 400, { error: "That file isn't an HRT Log export." });
-    if (b.rev !== undefined && b.rev !== getRev()) return json(res, 409, { error: "stale", rev: getRev() });
+    // A missing rev means 0, not "skip the check" — the same bug class fixed for rack docs:
+    // the real client always sends its current rev, so this only matters for a caller that
+    // doesn't, and silently overwriting real data because a conflict check got skipped is
+    // worse than a 409 a true first-ever import (rev really is 0) still passes cleanly.
+    if ((b.rev === undefined ? 0 : b.rev) !== getRev()) return json(res, 409, { error: "stale", rev: getRev() });
     return json(res, 200, { rev: writeState(s) });
   }
   if (url === "/hrt/api/export" && m === "GET") {
@@ -805,10 +845,24 @@ async function rackApi(req, res, url) {
     // "skip the check": the first write after this feature shipped (or the first write to a
     // brand-new key) is exactly when two devices are most likely to both be ver-less at once,
     // so treating that as unconditional-overwrite would silently defeat the whole feature on
-    // every doc's first post-upgrade save. Any body without a "doc" key at all (raw old-format)
-    // still gets the prior unconditional-overwrite behavior, matching callers from before this.
+    // every doc's first post-upgrade save. A caller sending the raw doc as the whole body (no
+    // wrapper) still gets the prior unconditional-overwrite behavior, matching callers from
+    // before this.
+    //
+    // Detecting the shape: the X-Doc-Format header is the primary, unambiguous signal the
+    // current client sets. But a browser tab can be running an OLDER client for a while after
+    // this server redeploys (nothing forces a page reload) — specifically the version that sent
+    // { doc, ver } without this header, which every rack-builder release before this one did.
+    // Treating that as "unwrapped" (as a header-only check would) stores the literal wrapper
+    // object as the document, corrupting it on that tab's very next save. So without the
+    // header, still recognize the wrapper by its exact shape: an object whose ONLY two keys are
+    // "doc" and "ver" — exactly what every real { doc, ver } caller, old or new, actually sends,
+    // and narrow enough that a genuine raw document would have to coincidentally consist of
+    // nothing but those two fields and nothing else to collide with it (unlike just checking
+    // for a "doc" key, which any raw document with an unrelated field by that name would hit).
     const b = await readBody(req, 1_000_000);
-    const wrapped = b && typeof b === "object" && !Array.isArray(b) && "doc" in b;
+    const looksWrapped = b && typeof b === "object" && !Array.isArray(b) && Object.keys(b).length === 2 && "doc" in b && "ver" in b;
+    const wrapped = (req.headers["x-doc-format"] === "wrapped" || looksWrapped) && b && typeof b === "object" && !Array.isArray(b);
     const doc = wrapped ? b.doc : b;
     if (!doc || typeof doc !== "object" || Array.isArray(doc) || tooDeep(doc)) return json(res, 400, { error: "bad json" });
     const curVer = RB.docVers[key] || 0;

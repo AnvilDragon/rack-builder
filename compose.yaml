@@ -142,6 +142,17 @@ services:
         # anyone on the LAN can trip to lock out the real HTTPS user. World-readable by default
         # (rack-builder reads it as a non-root user), regenerated only if missing so it survives
         # restarts.
+        #
+        # This mechanism isn't the only thing keeping X-Forwarded-For honest: by default, with
+        # no "trusted_proxies" declared below, Caddy itself already replaces any client-supplied
+        # X-Forwarded-For with the real connecting peer's address rather than trusting it - so
+        # the two layers are currently redundant. Do NOT add "trusted_proxies" to the site block
+        # below, especially not for this LAN's own range (the natural-looking choice for an app
+        # that describes itself as LAN-only) - that would make Caddy trust a client-supplied
+        # X-Forwarded-For from any LAN device, and since this container always sends a valid
+        # X-Proxy-Secret regardless of that setting, it would silently reopen exactly the
+        # spoofing this whole mechanism exists to close, just through the HTTPS port instead of
+        # the plain one.
         [ -s /data/proxy-secret.txt ] || cat /proc/sys/kernel/random/uuid > /data/proxy-secret.txt
         PROXY_SECRET=$(cat /data/proxy-secret.txt)
         printf '%s\n' '{' '  debug' '}' ':8443 {' '  tls internal {' '    on_demand' '  }' '  handle /root.mobileconfig {' '    header Content-Type application/x-apple-aspen-config' '    root * /data' '    file_server' '  }' '  reverse_proxy rack-builder:8080 {' "    header_up X-Proxy-Secret $PROXY_SECRET" '  }' '}' > /etc/caddy/Caddyfile

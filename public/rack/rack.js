@@ -109,15 +109,13 @@ function presetsRaw(){const P=(n,x)=>({...x,ph:n});return {
       9:"Install 2 drives and create a mirror pool. Set up a replication task on the NAS that sends its snapshots here, and point Minecraft backups at it.",
       10:"Add 2 more drives as a second mirror to the same pool. This doubles the space with no rebuild.",
       11:"Install an SFP+ card in your husband's PC, run his fiber cord, and mount the LC panel at U22.",
-      12:"Swap the NAS's single-port card for the dual-port X710. Keep the old card as a spare or sell it.",
-      13:"Only when your ISP offers 10G. Mount the router at U17, then give the Minecraft host its SFP+ card and DAC.",
       12:"Move everything from the open rack into the closed SRF 27.6.10, keeping the same U positions. Its fans, PDU and shelf come with it. The empty open rack becomes rack 2 for the gaming PCs.",
       13:"Install OPNsense on the Protectli and put it on the shelf at U17 in place of your current router. Plug the modem into its WAN port and your fiber switch into one of its SFP+ ports, so it is already ready for 10G internet. Turn on CrowdSec to block scanners and brute-force attempts. Real DDoS protection still comes from TCPShield or a Cloudflare tunnel in front of anything public.",
       15:"Set up the old open rack as rack 2 near a different breaker from rack 1. Size this UPS to both gaming PCs' real power draw before buying.",
       16:"Move each gaming PC into its 4U case. Check each GPU's length against the case first.",
       17:"Run fiber DisplayPort cables and the USB-over-fiber extender to your desk, then add powered hubs there.",
       18:"Same as step 15, for your husband's desk.",
-      19:"Nothing here is needed to finish rack 1. The experiment box is a used mini PC for Proxmox, so you can try things like the Pi-hole + Unbound project without touching the NAS. The NAS card upgrade is a nice-to-have, and the 10G internet parts only matter once your ISP offers 10G. Buy any of it whenever you want."},
+      19:"Nothing here is needed to finish rack 1. The experiment box is a used mini PC for Proxmox, so you can try things like the Pi-hole + Unbound project without touching the NAS. The NAS card upgrade (swap the single-port card for the dual-port X710, keeping the old one as a spare or to sell) is a nice-to-have, and the 10G internet parts only matter once your ISP offers 10G - mount the router at U17 and give the Minecraft host its SFP+ card and DAC once it does. Buy any of it whenever you want."},
     phases:{1:"1: UPS",2:"2: Cabinet",3:"3: Rack the NAS",4:"4: Rack the Minecraft host",6:"5: First fiber link (NAS to your PC)",7:"6: Fiber switch",
       8:"7: Storage + backup server",9:"8: First 2 drives (mirror)",10:"9: Next 2 drives",11:"10: Husband's PC on fiber",12:"11: Closed cabinet",13:"12: Firewall (OPNsense)",
       15:"13: Rack 2 UPS",16:"14: Gaming PC cases",17:"15: Your PC fiber video + USB",18:"16: Husband's PC fiber video + USB",19:"Later / optional"},items:[
@@ -377,7 +375,7 @@ $("reset").addEventListener("click",e=>{
 });
 $("copy").addEventListener("click",()=>{
   const R=rack();const lines=[LABEL[W.active],`${R.name} (${R.u}U) - ${money(R.p)}`];
-  let lp=0;[...S.items].sort((a,b)=>((a.ph||1)-(b.ph||1))||((b.pos||-1)-(a.pos||-1))).forEach(i=>(i.ph||1)!==lp&&lines.push("",PN(lp=(i.ph||1)))||lines.push(`${i.qty>1?i.qty+"x ":""}${i.name}${i.pos?` [U${i.pos}]`:""} - ${money(i.p*i.qty)}`));
+  let lp=0;[...S.items].sort((a,b)=>((a.ph||1)-(b.ph||1))||((b.pos||-1)-(a.pos||-1))).forEach(i=>{if((i.ph||1)!==lp)lines.push("",PN(lp=(i.ph||1)));lines.push(`${i.qty>1?i.qty+"x ":""}${i.name}${i.pos?` [U${i.pos}]`:""} - ${money(i.p*i.qty)}`)});
   lines.push(`Total: ${$("sT").textContent} | ${$("sW").textContent} | ${$("sE").textContent}`);
   const txt=lines.join("\n");
   const done=()=>{$("copyMsg").textContent="Parts list copied."};
@@ -455,7 +453,7 @@ function apImport(txt){const A=apState(),seen={};let n=0,unk=[];
   A.usedAt=new Date().toISOString();renderApps();apSave();
   $("apImp").textContent=`Updated ${Object.keys(seen).length} apps from ${n} containers.`+(unk.length?` Not matched: ${unk.join(", ")} (add them as apps first).`:"")}
 function apRefresh(){$("apRack").innerHTML=apRack();$("apStats").innerHTML=apStats();const l=$("apLive");if(l)l.innerHTML=liveHTML();const c=$("apCards");if(c)c.innerHTML=cardsHTML();setSync()}
-function apSave(){clearTimeout(apTimer);apTimer=setTimeout(()=>{const A=apState();try{localStorage.setItem("rb.apps",JSON.stringify(A))}catch(e){}if(DB)DB.doc("nas/apps").set(JSON.parse(JSON.stringify(A))).then(()=>{const m=$("apMsg");if(m)m.textContent="Saved."}).catch(()=>{const m=$("apMsg");if(m)m.textContent="Couldn't save. Try again in a moment."})},700)}
+function apSave(){clearTimeout(apTimer);apTimer=setTimeout(()=>{const A=apState();try{localStorage.setItem("rb.apps",JSON.stringify(A))}catch(e){}if(DB)DB.doc("nas/apps").set(JSON.parse(JSON.stringify(A))).then(()=>{const m=$("apMsg");if(m)m.textContent="Saved."}).catch(e=>{const m=$("apMsg");if(m)m.textContent=e&&e.code==="conflict"?"This changed on another device. Reload the page to see the latest.":"Couldn't save. Try again in a moment."})},700)}
 $("viewApps").addEventListener("input",e=>{const el=e.target,A=apState();
   if(el.dataset.ah){const k=el.dataset.ah;A.host[k]=el.type==="number"?nz(el.value,0):el.value;apRefresh();apSave();return}
   const r=el.closest(".arow");if(!r||!el.dataset.af)return;const a=A.apps[+r.dataset.ai],k=el.dataset.af;
@@ -508,11 +506,22 @@ function makeServerDB(){const subs=[];let cache={},docVer={},ver=-1;
         // devices apart editing the same doc and 409 instead of one silently overwriting
         // the other. On a 409 the server hands back its current value, which we adopt here
         // (and notify subscribers of) so the NEXT save isn't just rejected again.
-        const r=await fetch("api/doc/"+p,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({doc:d,ver:docVer[p]})});
+        // X-Doc-Format marks this as the new { doc, ver } wrapper shape, unambiguously — not
+        // left for the server to guess from whether the body happens to contain a "doc" key,
+        // which a legitimate raw document could coincidentally have too.
+        const r=await fetch("api/doc/"+p,{method:"PUT",headers:{"Content-Type":"application/json","X-Doc-Format":"wrapped"},body:JSON.stringify({doc:d,ver:docVer[p]})});
         const j=await r.json().catch(()=>({}));
         if(r.status===409){if("doc" in j)cache[p]=j.doc;if(j.ver!=null)docVer[p]=j.ver;fire();throw{code:"conflict"}}
         if(!r.ok)throw{code:"unavailable"};
-        cache[p]=JSON.parse(JSON.stringify(d));docVer[p]=j.docVer;ver=j.ver;fire()},
+        // ver (the global snapshot version) is deliberately left alone here — it's pull()'s
+        // alone to advance, from a real full-state GET. If a single-doc write's response bumped
+        // it too, a slower-but-earlier-sent pull() could arrive after and look "older" by that
+        // inflated number even though this tab never actually merged a full snapshot, and get
+        // silently dropped — permanently stranding every doc this tab never happens to write
+        // itself (plan/state, settings/budget, prices, other orders) missing from cache. Leaving
+        // ver untouched here means the next periodic pull() (<=5s later) picks up this write
+        // along with everything else, through the normal full-snapshot path.
+        cache[p]=JSON.parse(JSON.stringify(d));docVer[p]=j.docVer;fire()},
       async get(){return snap(p)},
       onSnapshot(cb){const f=()=>cb(snap(p));subs.push(f);f();return()=>{}}}},
     collection(n){return{onSnapshot(cb){const f=()=>{const docs=Object.keys(cache).filter(k=>k.startsWith(n+"/")&&k.split("/").length===2).map(snap);cb({docs,size:docs.length,empty:!docs.length})};subs.push(f);f();return()=>{}}}}};

@@ -68,16 +68,37 @@ jobs:
           echo "ok   /rack/api/live carries no per-app history (client builds its own)"
           expect "$(code -b jar $B/rack/api/state)" 200 "rack state"
 
-          # Rack Builder document save round trip
+          # Rack Builder document save round trip (legacy raw-body format - what a caller with
+          # no concept of per-doc versions sends, and must still work unconditionally)
           expect "$(code -b jar -X PUT $B/rack/api/doc/settings/budget -H "$J" -d '{"perCheck":70}')" 200 "rack doc save"
           curl -s -b jar $B/rack/api/state | grep -q '"perCheck":70'
           echo "ok   rack doc persisted"
+
+          # Rack Builder document save: the real client's actual wire format ({doc,ver} wrapper
+          # with X-Doc-Format: wrapped), its version-conflict behavior, and - this is the one a
+          # prior round shipped broken - that a tab still running the PREVIOUS client version
+          # (same {doc,ver} body, but no X-Doc-Format header, since that header didn't exist yet)
+          # still gets its document unwrapped correctly rather than having the literal wrapper
+          # object stored as the document.
+          expect "$(code -b jar -X PUT $B/rack/api/doc/orders/ci-test -H "$J" -H "X-Doc-Format: wrapped" -d '{"doc":{"status":"planned"}}')" 200 "rack doc save (wrapped, new client)"
+          curl -s -b jar $B/rack/api/state | grep -q '"orders/ci-test":{"status":"planned"}'
+          echo "ok   wrapped doc save persisted unwrapped, not the literal wrapper"
+          expect "$(code -b jar -X PUT $B/rack/api/doc/orders/ci-test -H "$J" -H "X-Doc-Format: wrapped" -d '{"doc":{"status":"shipped"},"ver":0}')" 409 "stale wrapped doc save rejected"
+          expect "$(code -b jar -X PUT $B/rack/api/doc/orders/ci-test2 -H "$J" -d '{"doc":{"status":"planned"},"ver":0}')" 200 "rack doc save (wrapped shape, no header - a tab on the previous client version)"
+          curl -s -b jar $B/rack/api/state | grep -q '"orders/ci-test2":{"status":"planned"}'
+          echo "ok   old-client wrapped-shaped body (no header) still unwrapped correctly"
 
           # HRT log round trip (rev check, save, malformed save rejected, exports)
           REV=$(curl -s -b jar $B/hrt/api/state | sed 's/.*"rev":\([0-9]*\).*/\1/')
           expect "$(code -b jar -X PUT $B/hrt/api/state -H "$J" -d "{\"rev\":$REV}")" 400 "malformed hrt save rejected"
           expect "$(code -b jar -X PUT $B/hrt/api/state -H "$J" -d "{\"rev\":$REV,\"state\":{\"start\":\"2026-01-01\",\"shots\":[{\"date\":\"2026-01-01\",\"ml\":0.1,\"site\":\"Thigh\"}]}}")" 200 "hrt save"
           expect "$(code -b jar -X PUT $B/hrt/api/state -H "$J" -d "{\"rev\":$REV,\"state\":{}}")" 409 "stale hrt save rejected"
+
+          # HRT import round trip: rev-checked like state save, and a missing rev must mean
+          # "expect rev 0" (so it 409s once real data exists), not "skip the check entirely".
+          REV=$(curl -s -b jar $B/hrt/api/state | sed 's/.*"rev":\([0-9]*\).*/\1/')
+          expect "$(code -b jar -X POST $B/hrt/api/import -H "$J" -d "{\"state\":{\"entries\":[],\"shots\":[],\"labs\":[]},\"rev\":$REV}")" 200 "hrt import with correct rev"
+          expect "$(code -b jar -X POST $B/hrt/api/import -H "$J" -d '{"state":{"entries":[],"shots":[],"labs":[]}}')" 409 "hrt import with missing rev rejected once data exists"
           expect "$(code -b jar "$B/hrt/api/export?format=csv")" 200 "csv export"
           expect "$(code -b jar "$B/hrt/api/export?format=json")" 200 "json export"
           curl -s -b jar -o backup.db "$B/hrt/api/export?format=sqlite"
@@ -253,6 +274,20 @@ jobs:
           [ "$NEVER_SET" = "null" ] && echo "ok   an untouched doc key stays absent, not polluted ($NEVER_SET)" || { echo "FAIL untouched doc key materialized as: $NEVER_SET"; fail=1; }
           exit $fail
 
+      - name: Attack — a raw document whose own content happens to contain "doc"/"ver" fields
+        run: |
+          set -eu
+          B=http://localhost:8080
+          fail=0
+          # A real (pre-versioning-protocol) document that just happens to have its own "doc"
+          # field among others must be stored as-is, not misread as the { doc, ver } wrapper and
+          # have every sibling field silently discarded.
+          curl -s -b jar -o /dev/null -X PUT "$B/rack/api/doc/attack/collide" -H 'Content-Type: application/json' \
+            -d '{"doc":{"nested":"value"},"extra":"should-be-kept"}'
+          STORED=$(node -e 'const s=JSON.parse(require("fs").readFileSync(0,"utf8")); process.stdout.write(JSON.stringify(s.docs["attack/collide"]))' < <(curl -s -b jar "$B/rack/api/state"))
+          [ "$STORED" = '{"doc":{"nested":"value"},"extra":"should-be-kept"}' ] && echo "ok   raw doc with its own doc/extra fields stored intact ($STORED)" || { echo "FAIL raw doc with a doc field got corrupted: $STORED"; fail=1; }
+          exit $fail
+
       - name: Attack — malformed, oversized and adversarial JSON bodies
         run: |
           set -eu
@@ -272,8 +307,12 @@ jobs:
           curl -sf "$B/healthz" >/dev/null && echo "ok   server still alive after deep JSON" || { echo "FAIL server died after deep JSON"; fail=1; }
           # The Rack doc store keeps the raw parsed body and re-serializes it on every future
           # save and every GET /rack/api/state — a small-but-deep body there must be rejected
-          # up front (400), not accepted and left to break every later read.
-          node -e 'const n=5000; require("fs").writeFileSync("/tmp/deep-rack.json", "[".repeat(n)+"1"+"]".repeat(n))'
+          # up front (400), not accepted and left to break every later read. The payload must be
+          # OBJECT-shaped at the top level, not array-shaped: a bare top-level array is already
+          # rejected by an earlier, depth-independent Array.isArray() guard, so a deep *array*
+          # payload here would still get 400 even with the actual depth check (tooDeep) deleted
+          # entirely — proving nothing about depth checking specifically.
+          node -e 'const n=5000; require("fs").writeFileSync("/tmp/deep-rack.json", "{\"deep\":"+"[".repeat(n)+"1"+"]".repeat(n)+"}")'
           c=$(code -b jar -X PUT "$B/rack/api/doc/attack/deep" -H 'Content-Type: application/json' --data-binary @/tmp/deep-rack.json)
           [ "$c" = "400" ] && echo "ok   deeply nested rack doc rejected up front (400)" || { echo "FAIL deeply nested rack doc -> $c (want 400, not stored)"; fail=1; }
           c=$(code -b jar "$B/rack/api/state")
